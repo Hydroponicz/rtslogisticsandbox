@@ -564,6 +564,7 @@ function npcDrive(t, dt){
   const r = t.route, hq = G.F[t.team].hq;
   if (!r){ t.status = 'Idle — awaiting route'; brake(t, dt); return; }
   if (r.mode === 'shuttle') return shuttle(t, dt);
+  if (r.mode === 'troops') return troopLift(t, dt);
   if (!alive(r.a) || !alive(r.b)){ t.route = null; t.status = 'Route broken (site gone)'; return; }
   const th = r.retreat && enemyCombatNear(t.team, t.x, t.y, 230);
   if (th && t.rs !== 'retreat'){ t.rs = 'retreat'; t.rt = 0; if (t.team === 0 && G.t - (t.warnT || -99) > 20){ t.warnT = G.t; msg(`Truck ${tName(t)} under threat — retreating to HQ.`, '#ffcf4a'); } }
@@ -632,6 +633,32 @@ function npcDrive(t, dt){
       break;
     }
     default: t.rs = 'toA';
+  }
+}
+// AI troop lift: pick a squad up at HQ, drive it toward the target, unload short of it
+function troopLift(t, dt){
+  const r = t.route, hq = G.F[t.team].hq;
+  const riders = r.units.filter(u => alive(u));
+  const finish = () => {
+    for (const u of [...t.pax]) unboard(u, t);
+    for (const u of riders) if (!u.inVeh){ if (alive(r.target)) guardAt(u, r.target.x, r.target.y, 60); else { u.post = null; if (alive(hq)) guardAt(u, hq.x, hq.y, 60); } }
+    t.route = null; t.status = 'Troops delivered';
+  };
+  if (!riders.length){ finish(); return; }
+  switch (t.rs){
+    case 'board':
+      brake(t, dt); t.rt += dt;
+      for (const u of riders) if (!u.inVeh){ u.gx = t.x; u.gy = t.y; u.ox = u.oy = 0; if (D(u, t) < 70) board(u, t); }
+      t.status = `Boarding troops ${t.pax.length}/${Math.min(riders.length, t.paxCap)}`;
+      if (t.pax.length >= Math.min(riders.length, t.paxCap) || t.rt > 25){ if (!t.pax.length) finish(); else { t.rs = 'toB'; t.rt = 0; } }
+      break;
+    case 'toB':
+      t.status = `Troop lift → ${alive(r.target) ? r.target.name : 'front'}`;
+      if (!alive(r.target) || t.hp < t.maxHp * .5 || driveTo(t, r.drop, dt)) finish();
+      break;
+    default:
+      t.status = 'Troop lift → pickup';
+      if (!alive(hq) || driveTo(t, hq, dt)){ t.rs = 'board'; t.rt = 0; }
   }
 }
 // leftover cargo from an earlier job is handed over wherever it is accepted
@@ -1303,7 +1330,19 @@ function aiTick(ai, dt){
       const ehq = G.F[E].hq;
       if ((ai.wave >= 3 && ai.wave % 2 === 1) || !target) target = ehq;
       if (alive(target) && pathTo(hq.x, hq.y, target.x, target.y)){
-        for (const u of r.slice(0, r.length - 1)){ u.post = 'atk'; u.atkB = target; guardAt(u, target.x, target.y, 60); }
+        const wave = r.slice(0, r.length - 1);
+        for (const u of wave){ u.post = 'atk'; u.atkB = target; guardAt(u, target.x, target.y, 60); }
+        // like the player, ride a truck to the front when one can be spared
+        const lift = trucks.find(t => t.driver && t.driver !== 'player' && cargoN(t) === 0 && D(t, hq) < 700 &&
+          (!t.route || (!t.route.once && t.route.mode !== 'troops' && (t.rs === 'toA' || t.rs === 'load' || t.rs === 'city'))));
+        if (lift && D(target, hq) > 900){
+          const dx = hq.x - target.x, dy = hq.y - target.y, d = Math.hypot(dx, dy) || 1;
+          let drop = { x:target.x + dx / d * 320, y:target.y + dy / d * 320, r:10 };
+          if (!passable(drop.x, drop.y) || (drop.x < RC) !== (target.x < RC)) drop = { x:target.x, y:target.y, r:target.r + 200 };
+          const riders = wave.slice(0, lift.paxCap);
+          for (const u of riders){ u.gx = lift.x; u.gy = lift.y; u.ox = u.oy = 0; }
+          setRoute(lift, { mode:'troops', key:'lift', units:riders, target, drop });
+        }
         ai.wave++;
         if (E === 0) msg(`Enemy forces moving toward ${target.name}!`, '#ff8a6a');
       }
@@ -1326,7 +1365,10 @@ function aiTick(ai, dt){
   }
   // recruitment
   const wantInf = Math.min(16, 6 + Math.floor(time / 100) * 2);
+  const fwd = G.bld.filter(b => b.kind === 'depot' && b.owner === T && alive(b) && !b.threat && b.inv.supplies >= COST.inf.supplies)
+    .sort((a, b) => D(a, G.F[E].hq) - D(b, G.F[E].hq))[0];
   if (eng.length < 3) recruit(T, 'eng');
+  else if (inf.length < wantInf && fwd && pers(T) < CAP) recruit(T, 'inf', fwd);
   else if (inf.length < wantInf && hq.inv.supplies >= 8) recruit(T, 'inf');
 
   // logistics jobs, highest priority first
@@ -1340,22 +1382,51 @@ function aiTick(ai, dt){
   for (const j of jobs) j.prio = 100;
   // persistent routes, scored by how badly each leg is needed right now
   if (okFac(S.q) && okFac(S.p)) jobs.push({ key:'qp', a:S.q, b:S.p, res:'stone', min:10, target:34, prio:20 + S.q.inv.stone - S.p.inv.stone });
-  if (okFac(S.p)) jobs.push({ key:'ph', a:S.p, b:hq, res:'concrete', min:6, target:110, prio:12 + S.p.inv.concrete * 2 - hq.inv.concrete / 5 });
+  // plant -> HQ concrete, bringing stone back to the plant when HQ has spare
+  if (okFac(S.p)) jobs.push({ key:'ph', a:S.p, b:hq, res:'concrete', min:6, target:110, prio:12 + S.p.inv.concrete * 2 - hq.inv.concrete / 5,
+    back:hq.inv.stone > 35 && S.p.inv.stone < 28 ? 'stone' : null });
+  for (const d of G.bld){
+    if (d.kind !== 'depot' || d.owner !== T || !alive(d) || d.threat) continue;
+    // empty depots that on-foot haulers fill
+    for (const res of ['stone', 'concrete']) if (d.inv[res] >= 10) jobs.push({ key:'dh' + d.id + res, a:d, b:hq, res, min:10, target:110, prio:d.inv[res] * 1.2 - 4 });
+    // stock forward depots with supplies so reinforcements can be raised at the front
+    if (D(d, hq) > 900 && d.inv.supplies < 8 && hq.inv.supplies >= 22) jobs.push({ key:'ds' + d.id, once:true, a:hq, b:d, res:'supplies', amount:12, prio:28 });
+  }
+  const staffed = G.bld.filter(b => isFac(b) && b.owner === T && b.state === 'ok').length;
+  if (trucks.length >= 3 && staffed >= 2) jobs.push({ key:'shuttle', mode:'shuttle', prio:9 });
   if (okFac(S.q) && (!okFac(S.p) || hq.inv.stone < 12)) jobs.push({ key:'qh', a:S.q, b:hq, res:'stone', min:10, target:100, prio:okFac(S.p) ? 5 + S.q.inv.stone / 2 : 40 });
   for (const c of [S.c, SE.c]) if (okFac(c) && !c.threat) jobs.push({ key:'ch' + c.id, a:c, b:hq, res:'stone', min:10, target:110, prio:c.inv.stone - hq.inv.stone / 3 });
   jobs.sort((a, b) => b.prio - a.prio);
   // the top N jobs get the N trucks; persistent routes outside the top N are pre-empted
   const crewed = trucks.filter(t => t.driver && t.driver !== 'player');
   const top = jobs.slice(0, crewed.length);
-  for (const t of crewed) if (t.route && !t.route.once && !top.some(j => j.key === t.route.key) && cargoN(t) === 0 && (t.rs === 'toA' || t.rs === 'load')) setRoute(t, null);
+  for (const t of crewed){
+    const r = t.route; if (!r || r.once || r.mode === 'troops') continue;
+    const j = jobs.find(j => j.key === r.key);
+    if (j && r.mode === 'cargo') r.back = j.back || null;
+    const idleNow = r.mode === 'shuttle' ? !t.pax.length && t.rs === 'city' : cargoN(t) === 0 && (t.rs === 'toA' || t.rs === 'load');
+    if (!top.some(j => j.key === r.key) && idleNow) setRoute(t, null);
+  }
   const idle = crewed.filter(t => !t.route);
   for (const j of top){
     if (trucks.some(t => t.route && t.route.key === j.key)) continue;
     const t = idle.shift(); if (!t) break;
     setRoute(t, { mode:'cargo', retreat:true, ...j });
   }
-  if (trucks.length < 4 && jobs.length > trucks.length && hq.inv.concrete >= COST.truck.concrete + 2 && hq.inv.supplies >= COST.truck.supplies + 6 && pers(T) < CAP - 1) buyTruck(T);
+  if (trucks.length < 5 && jobs.length > trucks.length && hq.inv.concrete >= COST.truck.concrete + 2 && hq.inv.supplies >= COST.truck.supplies + 6 && pers(T) < CAP - 1) buyTruck(T);
 
+  // forward depots next to production sites: on-foot hauling and a forward recruiting point
+  const deps = G.bld.filter(b => alive(b) && b.owner === T && (b.kind === 'depot' || (b.kind === 'bp' && b.bk === 'depot')));
+  if (deps.length < 3 && hq.inv.stone >= 22 && !G.bld.some(b => alive(b) && b.kind === 'bp' && b.owner === T)){
+    let placed = false;
+    for (const fac of [S.c, S.q, S.p, SE.c]){
+      if (placed || !okFac(fac) || fac.threat || deps.some(d => D(d, fac) < HAUL_R)) continue;
+      const dx = hq.x - fac.x, dy = hq.y - fac.y, d = Math.hypot(dx, dy) || 1;
+      for (const k of [170, 220, 270]){ for (const off of [0, 70, -70]){
+        if (placeBP(T, 'depot', fac.x + dx / d * k - dy / d * off, fac.y + dy / d * k + dx / d * off)){ placed = true; break; }
+      } if (placed) break; }
+    }
+  }
   // fortify: one concrete bunker at a time
   const bunks = G.bld.filter(b => alive(b) && b.owner === T && (b.kind === 'bunker' || (b.kind === 'bp' && b.bk === 'bunker')));
   if (bunks.length < 5 && hq.inv.concrete >= 10 && !G.bld.some(b => alive(b) && b.kind === 'bp' && b.owner === T)){
