@@ -38,6 +38,10 @@
   .sub{color:var(--dim);margin-bottom:4px}
   .sec{margin-top:6px;padding-top:5px;border-top:1px solid var(--line)}
   .dim{color:var(--dim)}
+  table.pax{border-collapse:collapse;width:100%;margin:3px 0}
+  table.pax td{padding:1px 2px;white-space:nowrap}
+  table.pax td.n{text-align:right;color:var(--warn)}
+  table.pax button{padding:1px 5px;margin:0 1px}
   .row{display:flex;justify-content:space-between;align-items:center;gap:4px;margin:2px 0}
   button{background:#2b3a2e;color:var(--text);border:1px solid #4d6651;border-radius:4px;padding:3px 7px;
     font:inherit;cursor:pointer;margin:2px 2px 0 0}
@@ -80,9 +84,9 @@
     <div class="cols">
       <div><kbd>WASD</kbd> walk / drive · <kbd>Mouse</kbd> aim · <kbd>LMB</kbd> fire</div>
       <div><kbd>E</kbd> enter / exit truck</div>
-      <div><kbd>F</kbd> on foot: call nearby troops to follow · in truck: board them</div>
-      <div><kbd>G</kbd> on foot: send followers to cursor · in truck: unload passengers</div>
-      <div><kbd>Q</kbd> cycle who <kbd>G</kbd> sends (all / infantry / engineers)</div>
+      <div><kbd>F</kbd> on foot: call nearby troops to follow · in truck: board them (<kbd>Shift</kbd>+F: just one)</div>
+      <div><kbd>G</kbd> on foot: send followers to cursor · in truck: unload (<kbd>Shift</kbd>+G: just one)</div>
+      <div><kbd>Q</kbd> choose who F/G affect: all / infantry / engineers (+ civilians in a truck)</div>
       <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> in truck: load 5 stone / concrete / supplies · <kbd>Shift</kbd>+ unload</div>
       <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> on foot: hand-carry 1 crate · press again to drop it off</div>
       <div><kbd>R</kbd> in truck at a site: mark route start, then route end</div>
@@ -495,7 +499,8 @@ function board(u, t){
   if (t.pax.length >= t.paxCap || u.inVeh) return false;
   if (u.carry) dropCarry(u);
   if (u.gar){ u.gar.gar = u.gar.gar.filter(x => x !== u); u.gar = null; }
-  u.inVeh = t; t.pax.push(u); u.path = null; u.dest = null; u.job = null;
+  u.inVeh = t; t.pax.push(u); u.path = null; u.dest = null;
+  if (u.type !== 'crew') u.job = null; // crews keep their workplace while riding
   return true;
 }
 function unboard(u, t){
@@ -719,7 +724,7 @@ function civStop(t){
     else if (D(t, u.job) < u.job.r + 75){ unboard(u, t); setSt(u, 'walkWork'); }
   }
   for (const u of G.units){
-    if (t.pax.length >= t.paxCap) break;
+    if (t.pax.length >= t.paxCap || (t.driver === 'player' && !t.autoCiv)) break;
     if (u.type !== 'crew' || u.team !== t.team || !onMap(u) || D(u, t) > 130) continue;
     if (u.st === 'waitBus' || (u.st === 'walkWork' && jobOk(u) && D(t, u.job) > u.job.r + 160)){ if (board(u, t)){ u.st = 'ride'; u.dir = 'work'; } }
     else if (u.st === 'offShift' || u.st === 'walkHome'){ if (board(u, t)){ u.st = 'ride'; u.dir = 'home'; } }
@@ -1185,7 +1190,7 @@ function followers(){ return G.units.filter(u => u.team === 0 && u.mode === 'fol
 function cmdWhistle(){
   const p = G.player; let n = followers().length, got = 0;
   for (const u of G.units){
-    if (u.team !== 0 || !alive(u) || u.inVeh || !(u.type === 'inf' || u.type === 'eng')) continue;
+    if (u.team !== 0 || !alive(u) || u.inVeh || !filterTypes().includes(u.type)) continue;
     if (u.mode === 'follow' || D(u, p) > 230) continue;
     if (u.gar){ const b = u.gar; b.gar = b.gar.filter(z => z !== u); u.gar = null; u.x = b.x + rnd(-15, 15); u.y = b.y + b.r + 6; }
     u.mode = 'follow'; u.fi = n++; u.job = null; got++;
@@ -1203,24 +1208,64 @@ function cmdSend(){
   G.fx.push({ k:'ring', x:G.mx, y:G.my, t:.6, m:.6, r:spread + 20, c:'#7fdc6a' });
   msg(`${fl.length} unit${fl.length > 1 ? 's' : ''} posted to guard that area.`);
 }
-function cmdBoard(t){
+// ---- choosing who gets in and out of a truck
+const BOARD_R = 170, PAX_TYPES = ['inf', 'eng', 'crew'];
+const PAXN = { inf:'Infantry', eng:'Engineers', crew:'Civilians' };
+const filterTypes = () => G.filter === 'all' ? ['inf', 'eng'] : [G.filter];
+function boardable(t, type){
+  return G.units.filter(u => u.team === t.team && u.type === type && onMap(u) && D(u, t) < BOARD_R &&
+    (type === 'crew' ? u.st !== 'flee' : (u.mode === 'follow' || u.mode === 'guard'))).sort((a, b) => D(a, t) - D(b, t));
+}
+function boardType(t, type, n){
   let got = 0;
-  for (const u of G.units){
-    if (u.team !== 0 || !alive(u) || u.inVeh || u.gar || !(u.type === 'inf' || u.type === 'eng')) continue;
-    if (D(u, t) > 170 || u.mode !== 'follow' && u.mode !== 'guard') continue;
-    if (!board(u, t)) break;
+  for (const u of boardable(t, type)){
+    if (got >= n || !board(u, t)) break;
+    if (type === 'crew'){ const toWork = u.dir === 'work' && jobOk(u); u.st = 'ride'; u.dir = toWork ? 'work' : 'home'; }
     got++;
   }
-  msg(got ? `${got} boarded ${tName(t)} (${t.pax.length}/${t.paxCap}).` : 'No idle troops nearby to board.', got ? '#dfe6dc' : '#ffcf4a');
+  return got;
 }
-function cmdUnloadPax(t){
-  let n = 0;
+function unloadType(t, type, n){
+  let k = 0;
   for (const u of [...t.pax]){
-    unboard(u, t); n++;
-    if (u.type === 'crew'){ setSt(u, u.dir === 'home' ? 'walkHome' : 'walkWork'); }
+    if (k >= n) break;
+    if (type !== 'all' && u.type !== type) continue;
+    unboard(u, t); k++;
+    if (u.type === 'crew') setSt(u, u.dir === 'home' ? 'walkHome' : 'walkWork');
     else guardAt(u, t.x, t.y, 40);
   }
-  if (n) msg(`${n} passenger${n > 1 ? 's' : ''} disembarked.`);
+  return k;
+}
+function cmdBoard(t, n = Infinity){
+  if (t.pax.length >= t.paxCap){ msg(`${tName(t)} is full (${t.paxCap}).`, '#ffcf4a'); return; }
+  let got = 0;
+  for (const ty of filterTypes()) got += boardType(t, ty, n - got);
+  const who = G.filter === 'all' ? 'troops' : PAXN[G.filter].toLowerCase();
+  msg(got ? `${got} boarded ${tName(t)} (${t.pax.length}/${t.paxCap}).` : `No ${who} nearby to board.`, got ? '#dfe6dc' : '#ffcf4a');
+}
+function cmdUnloadPax(t, n = Infinity){
+  const k = G.filter === 'all' ? unloadType(t, 'all', n) : unloadType(t, G.filter, n);
+  msg(k ? `${k} passenger${k > 1 ? 's' : ''} got out.` : `No ${G.filter === 'all' ? 'passengers' : PAXN[G.filter].toLowerCase()} aboard.`, k ? '#dfe6dc' : '#ffcf4a');
+}
+// the truck whose passengers you can manage: the one you drive, or a parked one you stand beside
+function paxTruck(){
+  const p = G.player;
+  if (p.inVeh) return p.inVeh;
+  const t = G.sel && G.sel.isT ? G.sel : nearestTruck(p, 90, 0);
+  return t && t.team === 0 && !(t.driver && t.driver !== 'player') && D(p, t) < 120 && Math.abs(t.v) < 5 ? t : null;
+}
+function paxHTML(t){
+  let h = `<div class="sec"><b>Passengers</b> ${t.pax.length}/${t.paxCap} <span class="dim">· pickup range ${BOARD_R}</span>`;
+  let rows = '';
+  for (const ty of PAX_TYPES){
+    const aboard = t.pax.filter(u => u.type === ty).length, near = boardable(t, ty).length, full = t.pax.length >= t.paxCap;
+    if (!aboard && !near) continue;
+    rows += `<tr><td>${PAXN[ty]}</td><td class="n">${aboard}</td><td>${btn(`ul:${ty}:1`, '−1', !aboard)}${btn(`ul:${ty}:99`, 'all', !aboard)}</td><td class="n">${near}</td><td>${btn(`bd:${ty}:1`, '+1', !near || full)}${btn(`bd:${ty}:99`, 'all', !near || full)}</td></tr>`;
+  }
+  h += rows ? `<table class="pax"><tr class="dim"><td></td><td colspan="2">aboard</td><td colspan="2">nearby</td></tr>${rows}</table>` : '<div class="dim">Nobody aboard or in range.</div>';
+  h += `<div>${btn('autoCiv', 'Auto-board waiting civilians: ' + (t.autoCiv ? 'ON' : 'OFF'), false, !!t.autoCiv)}</div>`;
+  h += `<div>${btn('unpax', 'Everyone out', !t.pax.length)} <span class="dim">F/G use filter: ${G.filter === 'all' ? 'troops' : PAXN[G.filter]} · Shift = one at a time</span></div>`;
+  return h + '</div>';
 }
 function toggleVehicle(){
   const p = G.player;
@@ -1229,6 +1274,7 @@ function toggleVehicle(){
     const t = p.inVeh;
     if (Math.abs(t.v) > 40){ msg('Slow down before getting out.', '#ffcf4a'); return; }
     t.driver = null; p.inVeh = null;
+    if (G.filter === 'crew') G.filter = 'all';
     for (const a of [Math.PI / 2, -Math.PI / 2, Math.PI, 0]){
       const x = t.x + Math.cos(t.a + a) * 26, y = t.y + Math.sin(t.a + a) * 26;
       if (passable(x, y)){ p.x = x; p.y = y; break; }
@@ -1583,6 +1629,14 @@ function drawWorld(){
   }
   cx.setLineDash([]);
   for (const b of G.bld) drawB(b);
+  // pickup range of the truck you can load, with the units F would board highlighted
+  const pt = paxTruck();
+  if (pt){
+    cx.strokeStyle = 'rgba(191,224,255,.35)'; cx.lineWidth = 1.5; cx.setLineDash([6, 6]);
+    cx.beginPath(); cx.arc(pt.x, pt.y, BOARD_R, 0, 7); cx.stroke(); cx.setLineDash([]);
+    cx.strokeStyle = '#bfe0ff'; cx.lineWidth = 1.5;
+    for (const ty of PAX_TYPES) if (G.filter === ty || (G.filter === 'all' && ty !== 'crew')) for (const u of boardable(pt, ty)){ cx.beginPath(); cx.arc(u.x, u.y, u.r + 4, 0, 7); cx.stroke(); }
+  }
   for (const t of G.trucks) drawT(t);
   for (const u of G.units) if (onMap(u) && !(u.type === 'player' && (u.inVeh || u.down))) drawU(u);
   // fx
@@ -1829,7 +1883,7 @@ function truckHTML(t, driving){
           ${btn('load:' + r, 'Load 5', !a || cargoN(t) >= t.cap)}${btn('unl:' + r, 'Unload 5', !t.cargo[r] || !rm)}</span></div>`;
       }
     } else h += '<div class="sec dim">Park beside a site to load/unload (keys 1-3 / Shift+1-3).</div>';
-    h += `<div class="sec">${btn('board', 'Board troops (F)')}${btn('unpax', 'Unload passengers (G)', !t.pax.length)}</div>`;
+    h += paxHTML(t);
   }
   h += '<div class="sec"><b>Route</b> ';
   const r = t.route;
@@ -1875,14 +1929,14 @@ function ctxHTML(){
   }
   if (!e) return `<h3>In the field</h3><div class="dim">Walk up to a site or truck, or right-click one, to inspect it.<br><br>
     Followers: ${followers().length} · <kbd>G</kbd> sends: ${G.filter === 'all' ? 'everyone' : TYPEN[G.filter]}</div>`;
-  return e.isT ? truckHTML(e, false) : bldHTML(e) + handHTML(e);
+  return e.isT ? truckHTML(e, false) + (paxTruck() === e ? paxHTML(e) : '') : bldHTML(e) + handHTML(e);
 }
 function cmdHTML(){
   const hq = G.F[0].hq, fl = followers();
   let h = `<h3>Command</h3><div class="row"><span>Personnel</span><span>${pers(0)}/${CAP}</span></div>`;
   h += `<div>${btn('rec:inf', 'Infantry 4Su')}${btn('rec:eng', 'Engineer 5Su')}${btn('buyTruck', 'Truck 8Co+8Su')}</div>`;
   h += `<div class="sec">Blueprint: ${btn('build:depot', 'Depot 15St', false, G.build === 'depot')}${btn('build:bunker', 'Bunker 10Co', false, G.build === 'bunker')}</div>`;
-  h += `<div class="sec">Following you: ${fl.filter(u => u.type === 'inf').length} inf · ${fl.filter(u => u.type === 'eng').length} eng<br>G sends: ${['all', 'inf', 'eng'].map(f => btn('filter:' + f, f === 'all' ? 'All' : TYPEN[f], false, G.filter === f)).join('')}</div>`;
+  h += `<div class="sec">Following you: ${fl.filter(u => u.type === 'inf').length} inf · ${fl.filter(u => u.type === 'eng').length} eng<br>${G.player.inVeh ? 'F/G apply to' : 'F/G use'}: ${(G.player.inVeh ? ['all', 'inf', 'eng', 'crew'] : ['all', 'inf', 'eng']).map(f => btn('filter:' + f, f === 'all' ? 'All' : f === 'crew' ? 'Civilians' : TYPEN[f], false, G.filter === f)).join('')}</div>`;
   const ts = G.trucks.filter(t => t.team === 0);
   h += '<div class="sec"><b>Fleet</b>' + ts.map(t => `<div class="row"><span>${btn('selT:' + t.id, tName(t))}</span><span class="dim" style="text-align:right;flex:1">${t.status}</span></div>`).join('') + '</div>';
   return h;
@@ -1890,7 +1944,7 @@ function cmdHTML(){
 function helpHTML(){
   const p = G.player;
   if (p.down) return `<b>Commander down</b> — redeploying in ${Math.ceil(p.respawn)}s`;
-  if (p.inVeh) return '<b>WASD</b> drive · <b>E</b> exit · <b>F</b> board troops · <b>G</b> unload passengers · <b>1/2/3</b> load · <b>Shift+1/2/3</b> unload · <b>R</b> route start/end · stop at your city or sites to swap civilian crews';
+  if (p.inVeh) return '<b>WASD</b> drive · <b>E</b> exit · <b>F</b> board · <b>G</b> unload (<b>Shift</b> = one) · <b>Q</b> who · <b>1/2/3</b> load · <b>Shift+1/2/3</b> unload · <b>R</b> route start/end · stop at your city or sites to swap civilian crews';
   if (G.build) return `Placing <b>${BPDEF[G.build].name}</b> — <b>LMB</b> place · <b>B</b> next · <b>Esc</b> cancel`;
   return '<b>WASD</b> move · <b>LMB</b> fire · <b>E</b> enter truck · <b>1/2/3</b> carry a crate (again to drop) · <b>F</b> call troops · <b>G</b> send to cursor · <b>Q</b> filter · <b>B</b> blueprint · <b>RMB</b> inspect · <b>P</b> pause · <b>[ ]</b> speed';
 }
@@ -1920,7 +1974,10 @@ function doAct(a){
     case 'load': if (t) truckLoad(t, v, 5); break;
     case 'unl': if (t) truckUnload(t, v, 5); break;
     case 'board': if (t) cmdBoard(t); break;
-    case 'unpax': if (t) cmdUnloadPax(t); break;
+    case 'unpax': { const pt = paxTruck(); if (pt){ const k = unloadType(pt, 'all', 99); if (k) msg(`${k} passenger${k > 1 ? 's' : ''} got out.`); } break; }
+    case 'autoCiv': { const pt = paxTruck(); if (pt) pt.autoCiv = !pt.autoCiv; break; }
+    case 'bd': { const pt = paxTruck(); if (pt){ const [, ty, n] = a.split(':'); const k = boardType(pt, ty, +n); msg(k ? `${k} ${PAXN[ty].toLowerCase()} boarded ${tName(pt)} (${pt.pax.length}/${pt.paxCap}).` : `${tName(pt)} is full.`, k ? '#dfe6dc' : '#ffcf4a'); } break; }
+    case 'ul': { const pt = paxTruck(); if (pt){ const [, ty, n] = a.split(':'); const k = unloadType(pt, ty, +n); if (k) msg(`${k} ${PAXN[ty].toLowerCase()} got out.`); } break; }
     case 'rStart': routeKey(); break;
     case 'rRes': if (G.draft) G.draft.res = v; break;
     case 'rMin': if (G.draft){ const o = [5, 10, 15, 20]; G.draft.min = o[(o.indexOf(G.draft.min) + 1) % o.length]; } break;
@@ -1955,9 +2012,14 @@ function onKey(e){
   const p = G.player, t = p.inVeh;
   switch (e.code){
     case 'KeyE': toggleVehicle(); break;
-    case 'KeyF': if (p.down) break; t ? cmdBoard(t) : cmdWhistle(); break;
-    case 'KeyG': if (p.down) break; t ? cmdUnloadPax(t) : cmdSend(); break;
-    case 'KeyQ': { const o = ['all', 'inf', 'eng']; G.filter = o[(o.indexOf(G.filter) + 1) % 3]; msg(`G now sends: ${G.filter === 'all' ? 'everyone' : TYPEN[G.filter]}`); break; }
+    case 'KeyF': if (p.down) break; t ? cmdBoard(t, e.shiftKey ? 1 : Infinity) : cmdWhistle(); break;
+    case 'KeyG': if (p.down) break; t ? cmdUnloadPax(t, e.shiftKey ? 1 : Infinity) : cmdSend(); break;
+    case 'KeyQ': {
+      const o = t ? ['all', 'inf', 'eng', 'crew'] : ['all', 'inf', 'eng'];
+      G.filter = o[(o.indexOf(G.filter) + 1) % o.length];
+      msg(t ? `F/G in the truck now apply to: ${G.filter === 'all' ? 'all troops' : PAXN[G.filter]}` : `F calls / G sends: ${G.filter === 'all' ? 'everyone' : TYPEN[G.filter]}`);
+      break;
+    }
     case 'KeyB': { const o = [null, 'depot', 'bunker']; G.build = o[(o.indexOf(G.build) + 1) % 3]; break; }
     case 'KeyR': routeKey(); break;
     case 'Digit1': case 'Digit2': case 'Digit3': {
