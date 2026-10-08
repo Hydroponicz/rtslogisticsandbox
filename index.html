@@ -328,7 +328,7 @@ function init(){
   NID = 1;
   G = { t:0, units:[], trucks:[], bld:[], fx:[], msgs:[], bridges:[], speed:1, paused:false, over:null,
     sel:null, build:null, filter:'all', draft:null, zoom:.85, cam:{ x:400, y:1100 }, mx:0, my:0, mouseDown:false,
-    truckNum:[0, 0], sites:[{}, {}], F:[], decor:[], uiT:0 };
+    truckNum:[0, 0], sites:[{}, {}], F:[], decor:[], uiT:0, routes:[] };
   G.bridges = [450, 1100, 1750].map((y, i) => mkB('bridge', RC, y, -1, {
     name:['North Bridge', 'Central Bridge', 'South Bridge'][i], state:i === 1 ? 'damaged' : 'ok', repNeed:i === 1 ? 15 : 0 }));
   const names = [['Kessenburg', 'Kessen Quarry', 'Kessen Concrete Works', 'Ridge Quarry'],
@@ -1289,9 +1289,33 @@ function backButtons(r, act){
   if (!opts.length) return '<span class="dim">Return cargo: none possible on this route</span>';
   return 'Return: ' + btn(act + ':none', 'Empty', false, !r.back) + opts.map(x => btn(act + ':' + x, RESN[x], false, r.back === x)).join('');
 }
+// ---- saved route library: any route you record can be handed to other trucks
+const routeSig = r => [r.a.id, r.b.id, r.res, r.back || '', r.min, r.target, r.retreat].join('|');
+function rememberRoute(r){
+  if (!r || r.mode !== 'cargo') return;
+  const sig = routeSig(r), have = G.routes.find(x => routeSig(x) === sig);
+  if (have) return have;
+  const e = { id:NID++, mode:'cargo', a:r.a, b:r.b, res:r.res, min:r.min, target:r.target, retreat:r.retreat, back:r.back || null };
+  G.routes.push(e); return e;
+}
+function savedRoutes(){
+  // routes edited on a truck since saving (e.g. return cargo changed) are offered too
+  for (const t of G.trucks) if (t.team === 0 && alive(t) && t.route) rememberRoute(t.route);
+  G.routes = G.routes.filter(r => alive(r.a) && alive(r.b));
+  return G.routes;
+}
+const routeLabel = r => `${RESN[r.res]}: ${r.a.name} → ${r.b.name}${r.back ? ` ↩ ${RESN[r.back]}` : ''}`;
+const routeUsers = r => G.trucks.filter(t => t.team === 0 && alive(t) && t.route && t.route.mode === 'cargo' && routeSig(t.route) === routeSig(r)).length;
+function assignRoute(t, id){
+  const r = G.routes.find(x => x.id === id);
+  if (!t || !r){ return; }
+  setRoute(t, { mode:'cargo', a:r.a, b:r.b, res:r.res, min:r.min, target:r.target, retreat:r.retreat, back:r.back });
+  msg(`${tName(t)} assigned: ${routeLabel(r)}.${t.driver ? '' : ' Hire a driver to run it.'}`, '#7fdc6a');
+}
 function saveDraft(){
   const d = G.draft; if (!d || !d.b) return;
   setRoute(d.truck, { mode:'cargo', a:d.a, b:d.b, res:d.res, min:d.min, target:d.target, retreat:d.retreat, back:d.back || null });
+  rememberRoute(d.truck.route);
   msg(`Route saved on ${tName(d.truck)}: ${RESN[d.res]} ${d.a.name} → ${d.b.name}${d.back ? `, ${RESN[d.back]} back` : ''}. Exit the truck and hire a driver.`, '#7fdc6a');
   G.draft = null;
 }
@@ -1813,6 +1837,13 @@ function truckHTML(t, driving){
   else if (r && r.mode === 'shuttle') h += `<div>Civilian shuttle: ${G.F[0].city.name} ⇄ your staffed sites</div>`;
   else h += '<span class="dim">none</span>';
   if (r) h += '<div>' + btn('rClear', 'Clear route') + '</div>';
+  else {
+    const lib = savedRoutes();
+    h += '<div class="sec"><b>Assign a saved route</b>';
+    h += lib.length ? lib.map(x => `<div class="row"><span>${btn('rAssign:' + x.id, routeLabel(x))}</span><span class="dim">${routeUsers(x)} truck${routeUsers(x) === 1 ? '' : 's'}${routeUsers(x) ? '' : ' ' + btn('rForget:' + x.id, '✕')}</span></div>`).join('')
+      : '<div class="dim">None yet — drive a truck, press R at the start and end sites to record one.</div>';
+    h += '</div>';
+  }
   const d = G.draft;
   if (driving){
     if (d && d.truck === t){
@@ -1906,6 +1937,8 @@ function doAct(a){
     case 'crew': { const [, mode, id] = a.split(':'); const b = G.bld.find(x => x.id === +id); if (b && b.owner === 0){ b.crewMode = mode; if (mode === 'hold') evacuate(b, 'marked unsafe'); else msg(`${b.name}: crews ${mode === 'send' ? 'always sent' : 'on automatic'}.`); } break; }
     case 'evac': { const b = G.bld.find(x => x.id === +v); if (b && b.owner === 0){ b.crewMode = 'hold'; if (!evacuate(b, 'ordered out')) msg('No crews assigned there.'); } break; }
     case 'hpick': playerPickup(v); break;
+    case 'rAssign': assignRoute(target, +v); break;
+    case 'rForget': G.routes = G.routes.filter(x => x.id !== +v); break;
     case 'hdrop': playerDrop(); break;
     case 'recDepot': { const b = G.sel && G.sel.kind === 'depot' ? G.sel : nearestBld(p, 120, x => x.kind === 'depot' && x.owner === 0); if (b) recruit(0, 'inf', b); break; }
     case 'cancelBP': { const b = G.sel && G.sel.kind === 'bp' ? G.sel : nearestBld(p, 120, x => x.kind === 'bp' && x.owner === 0); if (b){ b.dead = true; msg('Blueprint cancelled.'); } break; }
