@@ -735,8 +735,8 @@ function bpMax(b){ let m = 1; for (const k in b.need) m = Math.min(m, (b.stock[k
 function jobValid(j, team){
   const e = j.ent; if (!alive(e)) return false;
   switch (j.kind){
-    case 'build': return e.owner === team && e.prog < bpMax(e) - .01;
-    case 'repair': return e.state === 'damaged' && e.repStock > e.repProg + .01 && (e.kind === 'bridge' || e.owner === team);
+    case 'build': return e.owner === team && e.prog < bpMax(e);
+    case 'repair': return e.state === 'damaged' && e.repStock > e.repProg && (e.kind === 'bridge' || e.owner === team);
     case 'fix': return e.owner === team && e.hp < e.maxHp - 1 && !!stoneSrc(e, team);
     case 'fixT': return e.team === team && e.hp < e.maxHp - 1 && Math.abs(e.v) < 5 && !!stoneSrc(e, team);
   }
@@ -1697,7 +1697,7 @@ function start(){
   requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
 }
 $('startBtn').addEventListener('click', start);
-window.__game = { get G(){ return G; }, step, start, AIs, mkU, setSt, hurt };
+window.__game = { get G(){ return G; }, step, start, AIs, mkU, setSt, hurt, placeBP };
 </script>
 </body>
 </html>
