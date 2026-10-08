@@ -83,7 +83,8 @@
       <div><kbd>F</kbd> on foot: call nearby troops to follow · in truck: board them</div>
       <div><kbd>G</kbd> on foot: send followers to cursor · in truck: unload passengers</div>
       <div><kbd>Q</kbd> cycle who <kbd>G</kbd> sends (all / infantry / engineers)</div>
-      <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> load 5 stone / concrete / supplies · <kbd>Shift</kbd>+ unload</div>
+      <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> in truck: load 5 stone / concrete / supplies · <kbd>Shift</kbd>+ unload</div>
+      <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> on foot: hand-carry 1 crate · press again to drop it off</div>
       <div><kbd>R</kbd> in truck at a site: mark route start, then route end</div>
       <div><kbd>B</kbd> cycle blueprint (depot / bunker), <kbd>LMB</kbd> place, <kbd>Esc</kbd> cancel</div>
       <div><kbd>RMB</kbd> inspect site or truck · <kbd>Wheel</kbd> zoom</div>
@@ -432,6 +433,7 @@ function killU(u){
   G.fx.push({ k:'boom', x:u.x, y:u.y, t:.4, m:.4, r:8, c:'#a33' });
   if (u.type === 'crew') casualty(u.team, u);
   if (u.type === 'player'){
+    if (u.carry){ const res = u.carry.res; dropCarry(u); msg(`Your crate of ${RESN[res]} was dropped.`, '#ffcf4a'); }
     u.dead = false; u.down = true; u.respawn = 8; u.hp = 0;
     for (const f of G.units) if (f.mode === 'follow'){ f.mode = 'guard'; f.gx = f.x; f.gy = f.y; }
     msg('Commander down! Redeploying at HQ in 8s.', '#ff5a4a');
@@ -1136,7 +1138,7 @@ function updPlayer(dt){
   let vx = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
   let vy = (k.KeyS || k.ArrowDown ? 1 : 0) - (k.KeyW || k.ArrowUp ? 1 : 0);
   const l = Math.hypot(vx, vy);
-  if (l){ stepTo(p, p.x + vx / l * 50, p.y + vy / l * 50, ST.player.spd, dt); }
+  if (l){ stepTo(p, p.x + vx / l * 50, p.y + vy / l * 50, ST.player.spd * (p.carry ? .85 : 1), dt); }
   if (G.mouseDown && !G.build && p.cd <= 0){ p.cd = ST.player.rof; playerShoot(); }
   if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 2 * dt);
 }
@@ -1151,6 +1153,33 @@ function playerShoot(){
   for (const b of G.bld) if (b.owner === 1 && b.maxHp && alive(b)) test(b, b.r);
   G.fx.push({ k:'tr', x1:p.x, y1:p.y, x2:p.x + dx * bt, y2:p.y + dy * bt, t:.07, c:'#fff6c0' });
   if (best && (best.kind || Math.random() < .88)) hurt(best, ST.player.dmg, 0);
+}
+// the commander can hand-carry a single crate for emergencies
+const handSite = p => nearestBld(p, 45, b => b.kind !== 'city');
+function playerPickup(res){
+  const p = G.player, b = handSite(p);
+  if (p.carry){ msg(`Already carrying 1 ${RESN[p.carry.res]} — drop it off first.`, '#ffcf4a'); return; }
+  if (!b){ msg('Walk right up to a site to pick up a crate.', '#ffcf4a'); return; }
+  if (avail(b, res, 0) <= 0){ msg(`No ${RESN[res]} you can take at ${b.name}.`, '#ffcf4a'); return; }
+  b.inv[res]--; p.carry = { res, n:1, from:b };
+  msg(`Picked up 1 ${RESN[res]} from ${b.name}.`);
+}
+function playerDrop(){
+  const p = G.player, b = handSite(p);
+  if (!p.carry){ msg('You are not carrying anything.', '#ffcf4a'); return; }
+  if (!b){ msg('Walk right up to a site to drop off your crate.', '#ffcf4a'); return; }
+  const res = p.carry.res;
+  if (!deposit(b, res, 1, 0)){ msg(`${b.name} won't take ${RESN[res]}${b.owner !== 0 && b.kind !== 'bridge' ? ' — it isn\'t ours' : ''}.`, '#ffcf4a'); return; }
+  p.carry = null; floatTxt(b.x, b.y - b.r, `+1 ${res}`, RESC[res]);
+  msg(`Delivered 1 ${RESN[res]} to ${b.name}.`, '#7fdc6a');
+}
+function handHTML(b){
+  const p = G.player;
+  if (p.inVeh || p.down || handSite(p) !== b) return '';
+  let h = '<div class="sec"><b>Hand carry</b> ';
+  if (p.carry) h += `(holding 1 ${RESN[p.carry.res]}) ` + btn('hdrop', `Drop off ${RESN[p.carry.res]}`, !room(b, p.carry.res, 0));
+  else { const o = RES.filter(r => avail(b, r, 0) > 0); h += o.length ? o.map(r => btn('hpick:' + r, `Take 1 ${RESN[r]}`)).join('') : '<span class="dim">nothing to take here</span>'; }
+  return h + '</div>';
 }
 function followers(){ return G.units.filter(u => u.team === 0 && u.mode === 'follow' && alive(u) && !u.inVeh); }
 function cmdWhistle(){
@@ -1211,6 +1240,7 @@ function toggleVehicle(){
   if (!t){ msg('No friendly truck within reach.', '#ffcf4a'); return; }
   if (t.driver){ msg(`${tName(t)} is driven by an NPC — release the driver first (truck panel).`, '#ffcf4a'); return; }
   t.driver = 'player'; p.inVeh = t; G.sel = null;
+  if (p.carry && cargoN(t) < t.cap){ t.cargo[p.carry.res]++; msg(`Loaded your crate of ${RESN[p.carry.res]} into ${tName(t)}.`); p.carry = null; }
 }
 function truckLoad(t, res, n){
   const b = atBld(t);
@@ -1814,7 +1844,7 @@ function ctxHTML(){
   }
   if (!e) return `<h3>In the field</h3><div class="dim">Walk up to a site or truck, or right-click one, to inspect it.<br><br>
     Followers: ${followers().length} · <kbd>G</kbd> sends: ${G.filter === 'all' ? 'everyone' : TYPEN[G.filter]}</div>`;
-  return e.isT ? truckHTML(e, false) : bldHTML(e);
+  return e.isT ? truckHTML(e, false) : bldHTML(e) + handHTML(e);
 }
 function cmdHTML(){
   const hq = G.F[0].hq, fl = followers();
@@ -1831,7 +1861,7 @@ function helpHTML(){
   if (p.down) return `<b>Commander down</b> — redeploying in ${Math.ceil(p.respawn)}s`;
   if (p.inVeh) return '<b>WASD</b> drive · <b>E</b> exit · <b>F</b> board troops · <b>G</b> unload passengers · <b>1/2/3</b> load · <b>Shift+1/2/3</b> unload · <b>R</b> route start/end · stop at your city or sites to swap civilian crews';
   if (G.build) return `Placing <b>${BPDEF[G.build].name}</b> — <b>LMB</b> place · <b>B</b> next · <b>Esc</b> cancel`;
-  return '<b>WASD</b> move · <b>LMB</b> fire · <b>E</b> enter truck · <b>F</b> call troops · <b>G</b> send to cursor · <b>Q</b> filter · <b>B</b> blueprint · <b>RMB</b> inspect · <b>P</b> pause · <b>[ ]</b> speed';
+  return '<b>WASD</b> move · <b>LMB</b> fire · <b>E</b> enter truck · <b>1/2/3</b> carry a crate (again to drop) · <b>F</b> call troops · <b>G</b> send to cursor · <b>Q</b> filter · <b>B</b> blueprint · <b>RMB</b> inspect · <b>P</b> pause · <b>[ ]</b> speed';
 }
 function uiRefresh(){
   $('top').innerHTML = facHTML(0) + `<div class="clock"><b>${fmt(G.t)}</b><br>${G.paused ? 'PAUSED' : '×' + G.speed}</div>` + facHTML(1);
@@ -1875,6 +1905,8 @@ function doAct(a){
     case 'release': if (target) releaseDriver(target); break;
     case 'crew': { const [, mode, id] = a.split(':'); const b = G.bld.find(x => x.id === +id); if (b && b.owner === 0){ b.crewMode = mode; if (mode === 'hold') evacuate(b, 'marked unsafe'); else msg(`${b.name}: crews ${mode === 'send' ? 'always sent' : 'on automatic'}.`); } break; }
     case 'evac': { const b = G.bld.find(x => x.id === +v); if (b && b.owner === 0){ b.crewMode = 'hold'; if (!evacuate(b, 'ordered out')) msg('No crews assigned there.'); } break; }
+    case 'hpick': playerPickup(v); break;
+    case 'hdrop': playerDrop(); break;
     case 'recDepot': { const b = G.sel && G.sel.kind === 'depot' ? G.sel : nearestBld(p, 120, x => x.kind === 'depot' && x.owner === 0); if (b) recruit(0, 'inf', b); break; }
     case 'cancelBP': { const b = G.sel && G.sel.kind === 'bp' ? G.sel : nearestBld(p, 120, x => x.kind === 'bp' && x.owner === 0); if (b){ b.dead = true; msg('Blueprint cancelled.'); } break; }
   }
@@ -1896,8 +1928,8 @@ function onKey(e){
     case 'KeyB': { const o = [null, 'depot', 'bunker']; G.build = o[(o.indexOf(G.build) + 1) % 3]; break; }
     case 'KeyR': routeKey(); break;
     case 'Digit1': case 'Digit2': case 'Digit3': {
-      if (!t) break;
       const r = RES[+e.code.slice(-1) - 1];
+      if (!t){ if (!p.down) e.shiftKey || p.carry ? playerDrop() : playerPickup(r); break; }
       e.shiftKey ? truckUnload(t, r, 5) : truckLoad(t, r, 5); break;
     }
     case 'KeyP': G.paused = !G.paused; break;
