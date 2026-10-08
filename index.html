@@ -24,6 +24,8 @@
   .meter>i{display:block;height:100%}
   #ctx{right:6px;top:92px;width:300px;max-height:calc(100vh - 380px);overflow:auto}
   #cmd{right:6px;bottom:6px;width:300px;max-height:270px;overflow:auto}
+  body.driving #cmd{max-height:120px}
+  body.driving #ctx{max-height:calc(100vh - 230px)}
   #log{position:fixed;left:8px;top:92px;width:420px;pointer-events:none;text-shadow:0 1px 2px #000}
   #log div{margin-bottom:2px}
   #help{left:260px;right:320px;bottom:6px;font-size:11px;color:var(--dim);text-align:center}
@@ -570,17 +572,26 @@ function npcDrive(t, dt){
       t.status = 'Retreating — threatened';
       if (!alive(hq) || driveTo(t, hq, dt)){
         t.rt += dt;
-        if (t.rt > 8 && !enemyCombatNear(t.team, t.x, t.y, 330)) t.rs = cargoN(t) > 0 ? 'toB' : 'toA';
+        if (t.rt > 8 && !enemyCombatNear(t.team, t.x, t.y, 330)) t.rs = t.cargo[r.res] > 0 ? 'toB' : 'toA';
       }
       break;
     case 'toA':
-      t.status = `→ ${r.a.name} to load ${RESN[r.res]}`;
-      if (driveTo(t, r.a, dt)){ t.rs = 'load'; t.rt = 0; }
+      t.status = r.back && t.cargo[r.back] ? `→ ${r.a.name} with ${t.cargo[r.back]} ${RESN[r.back]} (return load)` : `→ ${r.a.name} to load ${RESN[r.res]}`;
+      if (driveTo(t, r.a, dt)){ t.rs = r.back && t.cargo[r.back] ? 'unloadBack' : 'load'; t.rt = 0; }
+      break;
+    case 'unloadBack':
+      brake(t, dt); t.tick -= dt;
+      if (t.tick > 0) break;
+      if (t.cargo[r.back] > 0 && deposit(r.a, r.back, 1, t.team)){ t.cargo[r.back]--; t.tick = .14; t.status = `Unloading ${RESN[r.back]} at ${r.a.name}`; }
+      else { t.rs = 'load'; t.rt = 0; if (t.cargo[r.back] > 0) t.status = `${r.a.name} can't take more ${RESN[r.back]}`; }
       break;
     case 'load': {
       brake(t, dt); t.rt += dt; t.tick -= dt;
       dumpOther(t, r.a, r.res);
       const c = t.cargo[r.res];
+      const fwdBlocked = !r.once && c === 0 && (stockAt(r.b, r.res) >= r.target || room(r.b, r.res, t.team) <= 0);
+      // nothing to bring forward, but a return load is waiting at B: go fetch it empty
+      if (fwdBlocked && r.back && avail(r.b, r.back, t.team) >= Math.min(r.min, t.cap) && room(r.a, r.back, t.team) > 0){ t.rs = 'toB'; t.rt = 0; break; }
       if (!r.once && c === 0 && stockAt(r.b, r.res) >= r.target){ t.status = `Holding: ${r.b.name} at stock target (${r.target})`; break; }
       if (!r.once && room(r.b, r.res, t.team) <= 0 && c === 0){ t.status = `Holding: ${r.b.name} cannot accept ${RESN[r.res]}`; break; }
       if (r.once && room(r.b, r.res, t.team) <= 0){ t.route = null; t.status = 'Task no longer needed'; break; }
@@ -594,20 +605,32 @@ function npcDrive(t, dt){
       break;
     }
     case 'toB':
-      t.status = `→ ${r.b.name} with ${t.cargo[r.res]} ${RESN[r.res]}`;
+      t.status = t.cargo[r.res] ? `→ ${r.b.name} with ${t.cargo[r.res]} ${RESN[r.res]}` : `→ ${r.b.name} to fetch ${RESN[r.back]}`;
       if (driveTo(t, r.b, dt)){ t.rs = 'unload'; t.rt = 0; }
       break;
     case 'unload':
       brake(t, dt); t.tick -= dt;
       if (t.tick > 0) break;
-      dumpOther(t, r.b, r.res);
+      if (!r.back) dumpOther(t, r.b, r.res);
       if (t.cargo[r.res] > 0 && deposit(r.b, r.res, 1, t.team)){ t.cargo[r.res]--; t.tick = .14; t.status = `Unloading at ${r.b.name}`; }
       else if (t.cargo[r.res] === 0){
         if (r.once){ t.route = null; t.status = 'Task complete'; }
-        else t.rs = 'toA';
+        else { t.rs = r.back ? 'loadBack' : 'toA'; t.rt = 0; }
       } else if (r.once){ t.route = null; t.status = 'Task complete (destination full)'; }
-      else { t.rt += .5; t.tick = .5; t.status = `${r.b.name} is full — waiting`; if (t.rt > 6) t.rs = 'toA'; }
+      else { t.rt += .5; t.tick = .5; t.status = `${r.b.name} is full — waiting`; if (t.rt > 6){ t.rs = r.back ? 'loadBack' : 'toA'; t.rt = 0; } }
       break;
+    case 'loadBack': {
+      // return leg: take B's output back to A; wait up to 15s for the minimum load, never longer
+      brake(t, dt); t.rt += dt; t.tick -= dt;
+      const a = avail(r.b, r.back, t.team), c = t.cargo[r.back];
+      const space = Math.min(t.cap - cargoN(t), room(r.a, r.back, t.team) - c);
+      if (t.tick <= 0 && a > 0 && space > 0){ r.b.inv[r.back]--; t.cargo[r.back]++; t.tick = .18; }
+      const c2 = t.cargo[r.back], min = Math.min(r.min, t.cap);
+      const done = space <= 0 || cargoN(t) >= t.cap || (a === 0 && (c2 >= min || t.rt > 15));
+      if (done){ t.rs = 'toA'; t.rt = 0; }
+      else t.status = a > 0 ? `Loading return ${RESN[r.back]} ${c2}` : `Waiting for return load ${c2}/${min} (${Math.ceil(15 - t.rt)}s)`;
+      break;
+    }
     default: t.rs = 'toA';
   }
 }
@@ -1192,13 +1215,27 @@ function routeKey(){
   }
   if (!b || b === G.draft.a){ msg('Park next to a different site for the route END, then press R.', '#ffcf4a'); return; }
   G.draft.b = b;
+  G.draft.back = backOptions(G.draft).find(x => x !== G.draft.res) || null;
   if (b.kind === 'bp'){ const k = Object.keys(b.need)[0]; G.draft.res = k; }
   msg(`Route end: ${b.name}. Adjust settings in the panel, press R again (or Save).`, '#bfe0ff');
 }
+// what a route could carry back from B to A
+function acceptsEver(b, res){
+  if (b.kind === 'hq' || b.kind === 'depot') return true;
+  if (b.kind === 'bp') return !!b.need[res];
+  if (b.kind === 'bridge' || (isFac(b) && b.state === 'damaged')) return res === 'stone';
+  return b.kind === 'plant' && res === 'stone';
+}
+function backOptions(r){ return RES.filter(x => (r.b.kind === 'hq' || r.b.kind === 'depot' || facOut(r.b) === x) && acceptsEver(r.a, x)); }
+function backButtons(r, act){
+  const opts = backOptions(r);
+  if (!opts.length) return '<span class="dim">Return cargo: none possible on this route</span>';
+  return 'Return: ' + btn(act + ':none', 'Empty', false, !r.back) + opts.map(x => btn(act + ':' + x, RESN[x], false, r.back === x)).join('');
+}
 function saveDraft(){
   const d = G.draft; if (!d || !d.b) return;
-  setRoute(d.truck, { mode:'cargo', a:d.a, b:d.b, res:d.res, min:d.min, target:d.target, retreat:d.retreat });
-  msg(`Route saved on ${tName(d.truck)}: ${RESN[d.res]} ${d.a.name} → ${d.b.name}. Exit the truck and hire a driver.`, '#7fdc6a');
+  setRoute(d.truck, { mode:'cargo', a:d.a, b:d.b, res:d.res, min:d.min, target:d.target, retreat:d.retreat, back:d.back || null });
+  msg(`Route saved on ${tName(d.truck)}: ${RESN[d.res]} ${d.a.name} → ${d.b.name}${d.back ? `, ${RESN[d.back]} back` : ''}. Exit the truck and hire a driver.`, '#7fdc6a');
   G.draft = null;
 }
 
@@ -1671,7 +1708,7 @@ function truckHTML(t, driving){
   }
   h += '<div class="sec"><b>Route</b> ';
   const r = t.route;
-  if (r && r.mode === 'cargo') h += `<div>${RESN[r.res]}: ${r.a.name} → ${r.b.name}</div><div class="dim">min load ${r.min} · stop at dest stock ${r.target >= 9999 ? '∞' : r.target} · ${r.retreat ? 'retreat when threatened' : 'ignore threats'}</div>`;
+  if (r && r.mode === 'cargo') h += `<div>${RESN[r.res]}: ${r.a.name} → ${r.b.name}</div>${r.back ? `<div>↩ ${RESN[r.back]}: ${r.b.name} → ${r.a.name}</div>` : ''}<div>${backButtons(r, 'rBackE')}</div><div class="dim">min load ${r.min} · stop at dest stock ${r.target >= 9999 ? '∞' : r.target} · ${r.retreat ? 'retreat when threatened' : 'ignore threats'}</div>`;
   else if (r && r.mode === 'shuttle') h += `<div>Civilian shuttle: ${G.F[0].city.name} ⇄ your staffed sites</div>`;
   else h += '<span class="dim">none</span>';
   if (r) h += '<div>' + btn('rClear', 'Clear route') + '</div>';
@@ -1681,6 +1718,7 @@ function truckHTML(t, driving){
       h += `<div class="sec"><b>New route</b>: ${d.a.name} → ${d.b ? d.b.name : '<i>drive to destination, press R</i>'}</div>`;
       if (d.b){
         h += '<div>Cargo: ' + RES.map(x => btn('rRes:' + x, RESN[x], false, d.res === x)).join('') + '</div>';
+        h += `<div>${backButtons(d, 'rBack')}</div>`;
         h += `<div>${btn('rMin', 'Min load: ' + d.min)}${btn('rTgt', 'Dest target: ' + (d.target >= 9999 ? '∞' : d.target))}${btn('rRet', d.retreat ? 'Retreat if threatened' : 'Ignore threats')}</div>`;
         h += btn('rSave', 'Save route (R)');
       }
@@ -1726,6 +1764,7 @@ function helpHTML(){
 }
 function uiRefresh(){
   $('top').innerHTML = facHTML(0) + `<div class="clock"><b>${fmt(G.t)}</b><br>${G.paused ? 'PAUSED' : '×' + G.speed}</div>` + facHTML(1);
+  document.body.classList.toggle('driving', !!G.player.inVeh);
   $('ctx').innerHTML = ctxHTML();
   $('cmd').innerHTML = cmdHTML();
   $('help').innerHTML = helpHTML();
@@ -1755,6 +1794,8 @@ function doAct(a){
     case 'rMin': if (G.draft){ const o = [5, 10, 15, 20]; G.draft.min = o[(o.indexOf(G.draft.min) + 1) % o.length]; } break;
     case 'rTgt': if (G.draft){ const o = [20, 40, 80, 9999]; G.draft.target = o[(o.indexOf(G.draft.target) + 1) % o.length]; } break;
     case 'rRet': if (G.draft) G.draft.retreat = !G.draft.retreat; break;
+    case 'rBack': if (G.draft) G.draft.back = v === 'none' ? null : v; break;
+    case 'rBackE': if (target && target.route && target.route.mode === 'cargo'){ const r = target.route; r.back = v === 'none' ? null : v; if (!r.back && t !== target && (target.rs === 'loadBack' || target.rs === 'unloadBack')) target.rs = 'toA'; msg(`${tName(target)}: return cargo ${r.back ? RESN[r.back] : 'off'}.`); } break;
     case 'rSave': saveDraft(); break;
     case 'rCancel': G.draft = null; break;
     case 'rClear': if (target){ setRoute(target, null); msg(`Route cleared on ${tName(target)}.`); } break;
