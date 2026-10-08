@@ -199,7 +199,7 @@ function mkB(kind, x, y, owner, o = {}){
   const d = BDEF[kind];
   const b = { id:NID++, kind, x, y, r:d.r, owner, name:kind, hp:d.hp || 0, maxHp:d.hp || 0,
     inv:{ stone:0, concrete:0, supplies:0 }, state:'ok', repNeed:0, repStock:0, repProg:0, prodT:0,
-    cap:0, capT:-1, gar:[], cd:0, workers:0, threat:false, contested:false, ...o };
+    cap:0, capT:-1, gar:[], cd:0, workers:0, threat:false, contested:false, crewMode:'auto', lastDanger:-1e9, ...o };
   G.bld.push(b); return b;
 }
 function mkU(type, team, x, y, o = {}){
@@ -439,6 +439,7 @@ function killU(u){
 function casualty(team, u){
   const f = G.F[team];
   f.cas++; f.conf = Math.max(0, f.conf - 15);
+  if (u.job && alive(u.job)) u.job.lastDanger = Math.max(u.job.lastDanger, G.t + 45);
   const ratio = f.cas / CFG.cas;
   const who = team === 0 ? 'Our' : 'Enemy';
   msg(`${who} civilian worker killed near ${u.job ? u.job.name : 'the road'} (${f.cas}/${CFG.cas}).`, team === 0 ? '#ff8a6a' : '#c9a0a0');
@@ -616,7 +617,7 @@ function dumpOther(t, b, keep){
 }
 function shuttleDest(t){
   const set = new Set();
-  for (const u of t.pax) if (u.type === 'crew' && u.dir === 'work' && jobOk(u)) set.add(u.job);
+  for (const u of t.pax) if (u.type === 'crew' && u.dir === 'work' && jobOk(u) && crewAllowed(u.job)) set.add(u.job);
   if (t.pax.length < t.paxCap)
     for (const u of G.units) if (u.type === 'crew' && u.team === t.team && alive(u) && !u.inVeh && u.st === 'offShift' && u.job && alive(u.job)) set.add(u.job);
   let best = null, bd = 1e9;
@@ -703,7 +704,7 @@ function updCrew(u, dt){
         let p = u.prev || 'walkHome';
         if (p === 'working' || p === 'waitBus') p = 'walkWork';
         if (p === 'haul' && !u.carry) p = 'return';
-        if (f.withdrawn) p = 'walkHome';
+        if (f.withdrawn || (u.dir === 'work' && u.job && !crewAllowed(u.job))) p = 'walkHome';
         const sh = u.shift; setSt(u, p); if (p === 'return' || p === 'haul') u.shift = sh;
       }
       break;
@@ -714,7 +715,7 @@ function updCrew(u, dt){
       if (u.wt > CFG.busWait || !hasShuttle(u.team)) setSt(u, 'walkWork');
       break;
     case 'walkWork':
-      if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
+      if (!jobOk(u) || f.withdrawn || !crewAllowed(u.job)){ setSt(u, 'walkHome'); break; }
       if (walk(u, u.job.x + u.ox * 1.2, u.job.y + u.oy * 1.2, dt, 10)){ setSt(u, 'working'); u.shift = CFG.shift; f.conf = Math.min(confCap(f), f.conf + 1); }
       break;
     case 'working': {
@@ -749,6 +750,38 @@ function updCrew(u, dt){
     default: setSt(u, 'walkHome');
   }
 }
+// ---- crew dispatch policy per production site: 'auto' (hold while danger is recent), 'send', 'hold'
+const DANGER_R = 350, DANGER_MEMORY = 45;
+function crewAllowed(b){
+  if (b.threat) return false;
+  const mode = b.crewMode || 'auto';
+  if (mode === 'hold') return false;
+  if (mode === 'send') return true;
+  if (G.t - b.lastDanger < DANGER_MEMORY) return false;
+  // the AI also refuses to staff a site it has no infantry guarding
+  if (AIs[b.owner] && !G.units.some(u => u.team === b.owner && u.type === 'inf' && onMap(u) && D(u, b) < b.r + 160)) return false;
+  return true;
+}
+function crewPolicyText(b){
+  const mode = b.crewMode || 'auto';
+  if (mode === 'hold') return 'Holding: no crews will be sent';
+  if (b.threat) return 'Enemies at the site — no crews sent';
+  if (mode === 'send') return 'Always sending crews';
+  const ago = G.t - b.lastDanger;
+  if (ago < DANGER_MEMORY) return `Auto: holding crews — danger ${ago < 0 ? 'after a casualty' : Math.floor(ago) + 's ago'} (resumes in ${Math.ceil(DANGER_MEMORY - ago)}s)`;
+  return 'Auto: sending crews (site quiet)';
+}
+// send every crew assigned to this site home (working, waiting, walking or riding there)
+function evacuate(b, why){
+  let n = 0;
+  for (const u of G.units){
+    if (u.type !== 'crew' || u.job !== b || !alive(u) || u.dir !== 'work') continue;
+    if (u.inVeh){ u.dir = 'home'; n++; continue; }
+    setSt(u, 'walkHome'); n++;
+  }
+  if (n && b.owner === 0) msg(`${n} crew evacuating ${b.name} — ${why}.`, '#ffcf4a');
+  return n;
+}
 function crewAssigned(b){ let n = 0; for (const u of G.units) if (u.type === 'crew' && alive(u) && u.job === b && u.dir === 'work') n++; return n; }
 function dispatchInterval(f){
   let i = f.status === 'Warning' ? 6 : f.status === 'Restricted' ? 10 : 3;
@@ -778,7 +811,7 @@ function factionTick(f, dt){
     f.dispT = dispatchInterval(f);
     if (!f.withdrawn && f.pop > 0){
       for (const b of G.bld){
-        if (!isFac(b) || b.owner !== f.team || b.state !== 'ok' || b.threat) continue;
+        if (!isFac(b) || b.owner !== f.team || b.state !== 'ok' || !crewAllowed(b)) continue;
         const need = f.status === 'Restricted' ? Math.min(1, CFG.crew) : CFG.crew;
         if (crewAssigned(b) < need){
           const sx = f.city.x + (f.team ? -95 : 95), sy = f.city.y + rnd(-30, 30);
@@ -844,7 +877,8 @@ function engWork(u, dt){
   if (!u.job && u.jobT <= 0){ u.job = findJob(u); u.jobT = 1; }
   if (!u.job) return false;
   const e = u.job.ent, rr = (e.r || 16) + 14;
-  if (Math.hypot(e.x - u.x, e.y - u.y) > rr){ walk(u, e.x + u.ox * .4, e.y + u.oy * .4, dt, rr - 4); return true; }
+  // aim at the centre so 'arrived' always means 'within working reach' (an offset target could strand engineers just outside it)
+  if (Math.hypot(e.x - u.x, e.y - u.y) > rr){ walk(u, e.x, e.y, dt, rr - 8); return true; }
   u.workFx = G.t;
   switch (u.job.kind){
     case 'build':
@@ -946,6 +980,13 @@ function updBuildings(dt){
       }
     }
     if (isFac(b)){
+      if (b.owner >= 0){
+        const dz = !!enemyCombatNear(b.owner, b.x, b.y, DANGER_R);
+        if (dz){
+          b.lastDanger = G.t;
+          if ((b.crewMode || 'auto') === 'auto' && !b.evacuating){ b.evacuating = true; evacuate(b, 'enemies spotted nearby'); }
+        } else if (G.t - b.lastDanger > 3) b.evacuating = false;
+      }
       let w = 0;
       for (const u of G.units) if (u.type === 'crew' && u.job === b && u.st === 'working' && alive(u) && !u.inVeh) w++;
       b.workers = w;
@@ -973,7 +1014,7 @@ function updBuildings(dt){
 }
 function changeOwner(b, T){
   const old = b.owner;
-  b.owner = T; b.cap = 0; b.capT = -1;
+  b.owner = T; b.cap = 0; b.capT = -1; b.crewMode = 'auto'; b.lastDanger = G.t;
   for (const u of G.units) if (u.type === 'crew' && u.job === b && alive(u) && !u.inVeh && u.team !== T) setSt(u, 'walkHome');
   if (T === 0) msg(`${b.name} secured${old === 1 ? ' from the enemy' : ''}.`, '#7fdc6a');
   else if (old === 0) msg(`We lost ${b.name} to the enemy!`, '#ff5a4a');
@@ -1481,6 +1522,7 @@ function drawB(b){
   else if (b.kind === 'hq' || b.kind === 'depot') sub = `St ${b.inv.stone} · Co ${b.inv.concrete} · Su ${b.inv.supplies}`;
   else if (b.kind === 'bp') sub = Object.keys(b.need).map(k => `${RESN[k]} ${b.stock[k] || 0}/${b.need[k]}`).join(' ') + ` · ${Math.floor(100 * b.prog / b.pts)}%`;
   else if (b.kind === 'bunker') sub = `garrison ${b.gar.length}/4`;
+  if (isFac(b) && b.state === 'ok' && b.owner >= 0 && !crewAllowed(b) && b.owner === 0) sub += (b.crewMode === 'hold' ? ' · HOLD' : ' · UNSAFE');
   if (sub){
     const bad = sub.startsWith('DAMAGED') || sub.startsWith('DESTROYED') || sub.startsWith('SUPPORT');
     label(sub, b.x, b.kind === 'bridge' ? b.y + 58 : b.y + r + 16, bad ? '#ff9a7a' : '#c8d0c4', 11);
@@ -1577,6 +1619,12 @@ function bldHTML(b){
         b.kind === 'quarry' ? (b.inv.stone >= 40 ? 'Output full — haul it away' : 'Quarrying stone') :
         (b.inv.stone < 2 ? 'Needs stone input' : b.inv.concrete >= 30 ? 'Output full — haul it away' : 'Producing concrete (2 stone → 1)');
       h += `<div class="${b.active ? 'good' : 'warn'}">${why}</div>` + invRows(b);
+      if (b.owner === 0){
+        const m = b.crewMode || 'auto';
+        h += `<div class="sec"><b>Civilian crews</b> ${btn('crew:auto:' + b.id, 'Auto', false, m === 'auto')}${btn('crew:send:' + b.id, 'Always send', false, m === 'send')}${btn('crew:hold:' + b.id, 'Hold (unsafe)', false, m === 'hold')}</div>
+          <div class="${crewAllowed(b) ? 'good' : 'warn'}">${crewPolicyText(b)}</div>${btn('evac:' + b.id, 'Evacuate crews now', !crewAssigned(b))}
+          <div class="dim">Auto holds crews for ${DANGER_MEMORY}s after enemies come within ${DANGER_R}m or a worker dies, and evacuates the site when enemies approach.</div>`;
+      }
       const dep = G.bld.find(x => x.kind === 'depot' && x.owner === b.owner && alive(x) && D(x, b) < HAUL_R);
       const hc = (t) => G.units.filter(u => alive(u) && u.carry && u.carry.from === b && u.type === t).length;
       h += dep ? `<div class="sec">Hauls on foot to <b>${dep.name}</b>: ${hc('crew')} crew · ${hc('eng')} eng · ${hc('inf')} inf carrying</div>
@@ -1591,6 +1639,9 @@ function bldHTML(b){
   if (b.kind === 'bp'){
     h += Object.keys(b.need).map(k => `<div class="row"><span style="color:${RESC[k]}">${RESN[k]} delivered</span><span>${b.stock[k] || 0}/${b.need[k]}</span></div>`).join('');
     h += `<div class="row"><span>Construction</span><span>${Math.floor(100 * b.prog / b.pts)}%</span></div><div class="dim">Truck the materials here; engineers build only with what's on site.</div>`;
+    const builders = G.units.filter(u => u.type === 'eng' && u.team === b.owner && alive(u) && u.job && u.job.ent === b).length;
+    h += b.prog >= bpMax(b) - 1e-6 ? '<div class="warn">Paused: waiting for materials</div>'
+      : builders ? `<div class="good">${builders} engineer${builders > 1 ? 's' : ''} building</div>` : '<div class="warn">No engineer assigned — post engineers here (G)</div>';
     if (b.owner === 0) h += btn('cancelBP', 'Cancel blueprint (materials lost)');
   }
   if ((isFac(b) || b.kind === 'depot') && b.capT >= 0 && b.cap > 0) h += `<div class="sec">Being captured by ${b.capT ? 'Red' : 'Blue'}: ${Math.floor(100 * b.cap / (b.owner < 0 ? 6 : 10))}%</div>`;
@@ -1710,6 +1761,8 @@ function doAct(a){
     case 'shuttle': if (target){ setRoute(target, { mode:'shuttle', retreat:true }); msg(`${tName(target)} is now a civilian shuttle. ${target.driver ? '' : 'Hire a driver to run it.'}`, '#7fdc6a'); } break;
     case 'hire': if (target) hireDriver(0, target); break;
     case 'release': if (target) releaseDriver(target); break;
+    case 'crew': { const [, mode, id] = a.split(':'); const b = G.bld.find(x => x.id === +id); if (b && b.owner === 0){ b.crewMode = mode; if (mode === 'hold') evacuate(b, 'marked unsafe'); else msg(`${b.name}: crews ${mode === 'send' ? 'always sent' : 'on automatic'}.`); } break; }
+    case 'evac': { const b = G.bld.find(x => x.id === +v); if (b && b.owner === 0){ b.crewMode = 'hold'; if (!evacuate(b, 'ordered out')) msg('No crews assigned there.'); } break; }
     case 'recDepot': { const b = G.sel && G.sel.kind === 'depot' ? G.sel : nearestBld(p, 120, x => x.kind === 'depot' && x.owner === 0); if (b) recruit(0, 'inf', b); break; }
     case 'cancelBP': { const b = G.sel && G.sel.kind === 'bp' ? G.sel : nearestBld(p, 120, x => x.kind === 'bp' && x.owner === 0); if (b){ b.dead = true; msg('Blueprint cancelled.'); } break; }
   }
