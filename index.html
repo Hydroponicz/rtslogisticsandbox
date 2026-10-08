@@ -231,6 +231,64 @@ function capOf(b, res){
   return 0;
 }
 const isFac = b => b.kind === 'quarry' || b.kind === 'plant';
+// ---- on-foot hauling from production sites to a nearby depot
+const HAUL_R = 380, HAUL_N = 2;
+const facOut = b => b.kind === 'quarry' ? 'stone' : b.kind === 'plant' ? 'concrete' : null;
+function haulDepot(b, team){
+  const res = facOut(b); if (!res || !alive(b)) return null;
+  let best = null, bd = HAUL_R;
+  for (const d of G.bld) if (d.kind === 'depot' && alive(d) && d.owner === team && room(d, res, team) > 0){ const dd = D(d, b); if (dd < bd){ bd = dd; best = d; } }
+  return best;
+}
+function haulers(b, types){ let n = 0; for (const u of G.units) if (alive(u) && u.carry && u.carry.from === b && types.includes(u.type)) n++; return n; }
+// carried goods go back to the source if close, else into any nearby friendly site that takes them
+function dropCarry(u){
+  const c = u.carry; u.carry = null;
+  if (!c || !c.n) return;
+  const src = c.from;
+  if (alive(src) && src.owner === u.team && D(u, src) < src.r + 150){ src.inv[c.res] = Math.min(capOf(src, c.res), src.inv[c.res] + c.n); return; }
+  const d = nearestBld(u, 150, b => b.owner === u.team && room(b, c.res, u.team) > 0);
+  if (d) deposit(d, c.res, c.n, u.team);
+}
+function startHaul(u, b){
+  const d = haulDepot(b, u.team); if (!d) return false;
+  u.carry = { res:facOut(b), from:b, to:d, phase:'pickup', n:0 }; u.path = null; u.dest = null;
+  return true;
+}
+// returns true while the unit is busy with a haul trip
+function stepCarry(u, dt){
+  const c = u.carry; if (!c) return false;
+  const src = c.from;
+  if (c.phase === 'pickup'){
+    if (!alive(src) || src.owner !== u.team){ u.carry = null; return false; }
+    if (!walk(u, src.x, src.y, dt, src.r + 6)) return true;
+    const k = Math.min(HAUL_N, src.inv[c.res]);
+    if (k <= 0){ u.carry = null; return false; }
+    src.inv[c.res] -= k; c.n = k; c.phase = 'deliver'; u.path = null; u.dest = null;
+    return true;
+  }
+  if (!alive(c.to) || c.to.owner !== u.team || room(c.to, c.res, u.team) <= 0){
+    c.to = alive(src) ? haulDepot(src, u.team) : null;
+    if (!c.to){ dropCarry(u); return false; }
+  }
+  const d = c.to;
+  if (!walk(u, d.x, d.y, dt, d.r + 6)) return true;
+  c.n -= deposit(d, c.res, c.n, u.team);
+  if (c.n > 0) dropCarry(u); else u.carry = null;
+  return false;
+}
+// soldiers on guard pick up a hauling job at the production site they are posted at
+function soldierHaul(u){
+  for (const b of G.bld){
+    if (!isFac(b) || !alive(b) || b.owner !== u.team || b.state !== 'ok' || b.threat) continue;
+    if (Math.hypot(b.x - u.gx, b.y - u.gy) > b.r + 90) continue;
+    const res = facOut(b);
+    if (b.inv[res] <= 0) continue;
+    if (u.type === 'inf' && haulers(b, ['crew', 'eng']) > 0) continue;
+    if (startHaul(u, b)) return true;
+  }
+  return false;
+}
 function canWithdraw(b, res, team){
   if (b.owner !== team) return false;
   if (b.kind === 'hq' || b.kind === 'depot') return true;
@@ -430,6 +488,7 @@ function endGame(winner, reason){
 // ============================================================ vehicles: boarding
 function board(u, t){
   if (t.pax.length >= t.paxCap || u.inVeh) return false;
+  if (u.carry) dropCarry(u);
   if (u.gar){ u.gar.gar = u.gar.gar.filter(x => x !== u); u.gar = null; }
   u.inVeh = t; t.pax.push(u); u.path = null; u.dest = null; u.job = null;
   return true;
@@ -617,6 +676,7 @@ function civStop(t){
 // ============================================================ civilians
 const jobOk = u => u.job && alive(u.job) && u.job.owner === u.team && u.job.state === 'ok';
 function setSt(u, st){
+  if (u.carry && st !== 'haul') dropCarry(u);
   u.st = st; u.path = null; u.dest = null; u.wt = 0;
   u.dir = (st === 'offShift' || st === 'walkHome') ? 'home' : (st === 'ride' ? u.dir : 'work');
 }
@@ -642,8 +702,9 @@ function updCrew(u, dt){
       if (u.fleeT <= 0){
         let p = u.prev || 'walkHome';
         if (p === 'working' || p === 'waitBus') p = 'walkWork';
+        if (p === 'haul' && !u.carry) p = 'return';
         if (f.withdrawn) p = 'walkHome';
-        setSt(u, p);
+        const sh = u.shift; setSt(u, p); if (p === 'return' || p === 'haul') u.shift = sh;
       }
       break;
     }
@@ -656,10 +717,27 @@ function updCrew(u, dt){
       if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
       if (walk(u, u.job.x + u.ox * 1.2, u.job.y + u.oy * 1.2, dt, 10)){ setSt(u, 'working'); u.shift = CFG.shift; f.conf = Math.min(confCap(f), f.conf + 1); }
       break;
-    case 'working':
+    case 'working': {
       if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
       u.shift -= dt;
-      if (u.shift <= 0) setSt(u, 'offShift');
+      if (u.shift <= 0){ setSt(u, 'offShift'); break; }
+      u.haulT = (u.haulT || 0) - dt;
+      const res = facOut(u.job);
+      if (u.haulT <= 0 && res){
+        u.haulT = 1;
+        if (u.job.inv[res] >= capOf(u.job, res) && startHaul(u, u.job)){ u.st = 'haul'; u.path = null; u.dest = null; }
+      }
+      break;
+    }
+    case 'haul':
+      if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
+      u.shift -= dt;
+      if (!stepCarry(u, dt) && !u.carry){ u.st = 'return'; u.path = null; u.dest = null; }
+      break;
+    case 'return':
+      if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
+      u.shift -= dt;
+      if (walk(u, u.job.x + u.ox * 1.2, u.job.y + u.oy * 1.2, dt, 10)){ u.st = u.shift <= 0 ? 'offShift' : 'working'; u.wt = 0; if (u.st === 'offShift') u.dir = 'home'; }
       break;
     case 'offShift':
       u.wt += dt;
@@ -804,6 +882,11 @@ function updSoldier(u, dt){
   if (u.tgt && (!alive(u.tgt) || u.tgt.inVeh || u.tgt.gar)) u.tgt = null;
   const tgt = u.tgt;
   if (tgt && u.cd <= 0){ fire(u, tgt, s.dmg, u.team); u.cd = s.rof * rnd(.85, 1.15); }
+  if (u.carry){
+    if (u.mode !== 'guard') dropCarry(u);
+    else if (u.type === 'inf' && tgt) return; // put the load down mentally, fight first
+    else if (stepCarry(u, dt)) return;
+  }
   if (u.type === 'eng' && u.mode === 'guard' && engWork(u, dt)) return;
   if (u.mode === 'follow'){
     const p = G.player;
@@ -816,6 +899,8 @@ function updSoldier(u, dt){
     if (tgt) return; // hold position and shoot
     const c = u.chase;
     if (c && alive(c) && Math.hypot(c.x - u.gx, c.y - u.gy) < u.gr + s.range * .6){ walk(u, c.x, c.y, dt, s.range * .85); return; }
+    u.haulT = (u.haulT || 0) - dt;
+    if (u.haulT <= 0){ u.haulT = 1; if (!c && soldierHaul(u)) return; }
     walk(u, u.gx + u.ox, u.gy + u.oy, dt, 8);
     if (u.type === 'inf'){
       for (const b of G.bld){
@@ -1285,6 +1370,15 @@ function drawWorld(){
     cx.stroke(); cx.setLineDash([]);
   }
   if (G.draft){ const d = G.draft; cx.strokeStyle = '#bfe0ff'; cx.lineWidth = 2; cx.setLineDash([6, 6]); cx.beginPath(); cx.moveTo(d.a.x, d.a.y); const e = d.b || d.truck; cx.lineTo(e.x, e.y); cx.stroke(); cx.setLineDash([]); }
+  // hauling links: production site -> depot in walking range
+  cx.lineWidth = 2; cx.setLineDash([3, 7]); cx.lineDashOffset = -G.t * 20;
+  for (const b of G.bld){
+    if (!isFac(b) || b.owner !== 0 || b.state !== 'ok') continue;
+    const d = haulDepot(b, 0) || G.bld.find(x => x.kind === 'depot' && x.owner === 0 && alive(x) && D(x, b) < HAUL_R);
+    if (!d) continue;
+    cx.strokeStyle = 'rgba(232,210,122,.45)'; cx.beginPath(); cx.moveTo(b.x, b.y); cx.lineTo(d.x, d.y); cx.stroke();
+  }
+  cx.setLineDash([]);
   for (const b of G.bld) drawB(b);
   for (const t of G.trucks) drawT(t);
   for (const u of G.units) if (onMap(u) && !(u.type === 'player' && (u.inVeh || u.down))) drawU(u);
@@ -1425,6 +1519,7 @@ function drawU(u){
     if (u.mode === 'follow'){ cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(u.x, u.y - u.r - 3, 1.8, 0, 7); cx.fill(); }
     if (u.workFx && G.t - u.workFx < .2 && Math.random() < .3) G.fx.push({ k:'boom', x:u.x + rnd(-6, 6), y:u.y + rnd(-6, 6), t:.15, m:.15, r:3, c:'#ffcf4a' });
   }
+  if (u.carry && u.carry.n){ cx.fillStyle = RESC[u.carry.res]; cx.fillRect(u.x + 3, u.y - u.r - 5, 6, 5); cx.strokeStyle = '#000'; cx.lineWidth = 1; cx.strokeRect(u.x + 3, u.y - u.r - 5, 6, 5); }
   if (u.type === 'crew' && u.st === 'flee'){ cx.fillStyle = '#ff5a4a'; cx.font = 'bold 10px monospace'; cx.fillText('!', u.x, u.y - 8); }
   if (u.hp < u.maxHp) bar(u.x, u.y - u.r - 7, 16, u.hp / u.maxHp, u.hp / u.maxHp > .5 ? '#7fdc6a' : '#ff5a4a');
 }
@@ -1482,6 +1577,11 @@ function bldHTML(b){
         b.kind === 'quarry' ? (b.inv.stone >= 40 ? 'Output full — haul it away' : 'Quarrying stone') :
         (b.inv.stone < 2 ? 'Needs stone input' : b.inv.concrete >= 30 ? 'Output full — haul it away' : 'Producing concrete (2 stone → 1)');
       h += `<div class="${b.active ? 'good' : 'warn'}">${why}</div>` + invRows(b);
+      const dep = G.bld.find(x => x.kind === 'depot' && x.owner === b.owner && alive(x) && D(x, b) < HAUL_R);
+      const hc = (t) => G.units.filter(u => alive(u) && u.carry && u.carry.from === b && u.type === t).length;
+      h += dep ? `<div class="sec">Hauls on foot to <b>${dep.name}</b>: ${hc('crew')} crew · ${hc('eng')} eng · ${hc('inf')} inf carrying</div>
+        <div class="dim">Crews haul when the site is full. Engineers posted here haul any output when idle. Infantry help only if nobody else is hauling and no enemies are near.</div>`
+        : `<div class="sec dim">No depot within ${HAUL_R}m — build a Forward Depot nearby and units will carry output to it on foot.</div>`;
     }
   }
   if (b.kind === 'hq' || b.kind === 'depot') h += '<div class="sec"></div>' + invRows(b);
@@ -1697,7 +1797,7 @@ function start(){
   requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
 }
 $('startBtn').addEventListener('click', start);
-window.__game = { get G(){ return G; }, step, start, AIs, mkU, setSt, hurt, placeBP };
+window.__game = { get G(){ return G; }, step, start, AIs, mkU, setSt, hurt, placeBP, mkB };
 </script>
 </body>
 </html>
