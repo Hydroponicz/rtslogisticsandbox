@@ -1,0 +1,1703 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reclamation Front</title>
+<style>
+  :root{
+    --bg:#1b211a; --panel:rgba(16,20,18,.88); --line:#3a4a3c; --text:#dfe6dc; --dim:#93a196;
+    --blue:#4aa3ff; --red:#ff5a4a; --warn:#ffcf4a; --good:#7fdc6a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+    font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  canvas#c{position:fixed;inset:0;display:block;cursor:crosshair}
+  .panel{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px 10px;
+    pointer-events:auto;user-select:none}
+  #top{position:fixed;top:0;left:0;right:0;display:flex;gap:8px;justify-content:space-between;align-items:stretch;
+    padding:6px;pointer-events:none}
+  #top .fac{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;min-width:0;flex:1;max-width:520px}
+  #top .clock{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 12px;text-align:center;align-self:flex-start}
+  .fac .name{font-weight:bold}
+  .meter{height:6px;background:#2a322b;border-radius:3px;overflow:hidden;margin:3px 0}
+  .meter>i{display:block;height:100%}
+  #ctx{right:6px;top:92px;width:300px;max-height:calc(100vh - 380px);overflow:auto}
+  #cmd{right:6px;bottom:6px;width:300px;max-height:270px;overflow:auto}
+  #log{position:fixed;left:8px;top:92px;width:420px;pointer-events:none;text-shadow:0 1px 2px #000}
+  #log div{margin-bottom:2px}
+  #help{left:260px;right:320px;bottom:6px;font-size:11px;color:var(--dim);text-align:center}
+  #help b{color:var(--text)}
+  #miniWrap{left:6px;bottom:6px;padding:4px}
+  #mini{display:block}
+  #banner{position:fixed;top:96px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:6px;
+    font-size:15px;font-weight:bold;display:none;pointer-events:none;text-align:center}
+  h3{margin:0 0 2px;font-size:13px}
+  .sub{color:var(--dim);margin-bottom:4px}
+  .sec{margin-top:6px;padding-top:5px;border-top:1px solid var(--line)}
+  .dim{color:var(--dim)}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:4px;margin:2px 0}
+  button{background:#2b3a2e;color:var(--text);border:1px solid #4d6651;border-radius:4px;padding:3px 7px;
+    font:inherit;cursor:pointer;margin:2px 2px 0 0}
+  button:hover{background:#3a5240}
+  button.on{background:#4d6a2a;border-color:#9fd16a}
+  button:disabled{opacity:.4;cursor:default}
+  .warn{color:var(--warn)} .bad{color:var(--red)} .good{color:var(--good)} .blue{color:var(--blue)}
+  .overlay{position:fixed;inset:0;background:rgba(8,10,8,.93);display:flex;align-items:center;justify-content:center;z-index:10;overflow:auto}
+  .card{max-width:820px;width:calc(100% - 32px);background:#141a15;border:1px solid var(--line);border-radius:10px;padding:22px 26px;margin:16px}
+  .card h1{margin:0;font-size:28px;letter-spacing:3px}
+  .card h2{font-size:14px;margin:16px 0 6px;color:var(--warn)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px}
+  .card label{display:flex;justify-content:space-between;gap:8px;margin:4px 0;align-items:center}
+  .card input,.card select{width:110px;background:#222b23;color:var(--text);border:1px solid #4d6651;border-radius:4px;padding:3px;font:inherit}
+  .big{font-size:16px;padding:8px 22px;margin-top:14px}
+  kbd{background:#2b3a2e;border:1px solid #4d6651;border-radius:3px;padding:0 4px}
+  @media (max-width:800px){ .cols{grid-template-columns:1fr} #help{display:none} #log{width:60vw} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="top"></div>
+<div id="log"></div>
+<div id="banner"></div>
+<div id="ctx" class="panel"></div>
+<div id="cmd" class="panel"></div>
+<div id="miniWrap" class="panel"><canvas id="mini" width="240" height="147"></canvas></div>
+<div id="help" class="panel"></div>
+
+<div id="start" class="overlay">
+  <div class="card">
+    <h1>RECLAMATION FRONT</h1>
+    <div class="dim">Valdoria, present day. The civil war wrecked the country's industry. Whoever restores it — and keeps the trucks rolling — wins the war.</div>
+    <h2>YOUR JOB</h2>
+    <div>Secure sites with infantry → bring engineers + stone to repair them → civilian crews commute in to run them →
+      haul stone to the concrete plant and concrete to where it is needed → automate the hauling with NPC drivers →
+      fortify, raid the enemy's network, and destroy the enemy HQ.<br>
+      <span class="dim">Cargo is physical: every crate sits somewhere on the map and only moves on a truck.</span></div>
+    <h2>CONTROLS</h2>
+    <div class="cols">
+      <div><kbd>WASD</kbd> walk / drive · <kbd>Mouse</kbd> aim · <kbd>LMB</kbd> fire</div>
+      <div><kbd>E</kbd> enter / exit truck</div>
+      <div><kbd>F</kbd> on foot: call nearby troops to follow · in truck: board them</div>
+      <div><kbd>G</kbd> on foot: send followers to cursor · in truck: unload passengers</div>
+      <div><kbd>Q</kbd> cycle who <kbd>G</kbd> sends (all / infantry / engineers)</div>
+      <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> load 5 stone / concrete / supplies · <kbd>Shift</kbd>+ unload</div>
+      <div><kbd>R</kbd> in truck at a site: mark route start, then route end</div>
+      <div><kbd>B</kbd> cycle blueprint (depot / bunker), <kbd>LMB</kbd> place, <kbd>Esc</kbd> cancel</div>
+      <div><kbd>RMB</kbd> inspect site or truck · <kbd>Wheel</kbd> zoom</div>
+      <div><kbd>P</kbd> pause · <kbd>[</kbd> <kbd>]</kbd> game speed</div>
+    </div>
+    <h2>MATCH SETTINGS</h2>
+    <div class="cols">
+      <label>Civilian casualty threshold <input id="setCas" type="number" min="3" max="40" value="10"></label>
+      <label>Crew size per site <input id="setCrew" type="number" min="1" max="6" value="3"></label>
+      <label>Worker shift length (s) <input id="setShift" type="number" min="40" max="400" value="150"></label>
+      <label>Collapse timer (s) <input id="setCollapse" type="number" min="30" max="400" value="150"></label>
+      <label>City worker pool <input id="setPop" type="number" min="6" max="60" value="24"></label>
+      <label>AI aggression <select id="setAggr"><option value="0.6">Passive</option><option value="1" selected>Normal</option><option value="1.6">Aggressive</option></select></label>
+    </div>
+    <button class="big" id="startBtn">Deploy</button>
+  </div>
+</div>
+<div id="end" class="overlay" style="display:none"><div class="card" id="endCard"></div></div>
+
+<script>
+'use strict';
+// ============================================================ setup
+const $ = id => document.getElementById(id);
+const cv = $('c'), cx = cv.getContext('2d');
+const mini = $('mini'), mx = mini.getContext('2d');
+let cw = 0, ch = 0;
+function resize(){ cw = cv.width = innerWidth; ch = cv.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+const W = 3600, H = 2200, RL = 1765, RR = 1835, RC = 1800;
+const TEAMC = ['#4aa3ff', '#ff5a4a'], NEU = '#9a9a9a';
+const RES = ['stone', 'concrete', 'supplies'];
+const RESC = { stone:'#c9b07a', concrete:'#d9dbe2', supplies:'#7fcf6a' };
+const RESN = { stone:'Stone', concrete:'Concrete', supplies:'Supplies' };
+const CAP = 24; // personnel cap: infantry + engineers + drivers
+const CFG = { cas:10, crew:3, shift:150, collapse:150, pop:24, aggr:1, busWait:12 };
+
+const rnd = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const D = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+const fmt = s => { s = Math.max(0, Math.floor(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+let NID = 1;
+let G = null;
+const AIs = [null, null];
+
+// ============================================================ definitions
+const BDEF = {
+  city:{ r:85 }, hq:{ r:58, hp:2500 }, quarry:{ r:52 }, plant:{ r:58 },
+  depot:{ r:38, hp:600 }, bunker:{ r:32, hp:1400 }, bridge:{ r:48 }, bp:{ r:36 }
+};
+const BPDEF = {
+  depot:{ need:{ stone:15 }, pts:18, name:'Forward Depot' },
+  bunker:{ need:{ concrete:10 }, pts:25, name:'Concrete Bunker' }
+};
+const ST = {
+  player:{ hp:150, spd:125, range:290, dmg:16, rof:.22, r:9 },
+  inf:{ hp:100, spd:74, range:210, dmg:9, rof:.9, r:7 },
+  eng:{ hp:80, spd:68, range:150, dmg:5, rof:1.3, r:7 },
+  crew:{ hp:50, spd:44, r:6 },
+  driver:{ hp:60, spd:80, r:6 }
+};
+const COST = { inf:{ supplies:4 }, eng:{ supplies:5 }, driver:{ supplies:3 }, truck:{ concrete:8, supplies:8 } };
+const TYPEN = { inf:'Infantry', eng:'Engineer', crew:'Civilian crew', driver:'Driver', player:'Commander' };
+
+// ============================================================ world helpers
+function bridgeOk(y){ for (const b of G.bridges) if (b.state === 'ok' && Math.abs(y - b.y) < 40) return true; return false; }
+function passable(x, y){
+  if (x < 8 || y < 8 || x > W - 8 || y > H - 8) return false;
+  if (x > RL && x < RR) return bridgeOk(y);
+  return true;
+}
+function pathTo(ax, ay, bx, by){
+  const sb = bx < RC ? 0 : 1;
+  if (ax > RL - 6 && ax < RR + 6){ // standing on a bridge
+    const ex = sb === 0 ? RL - 45 : RR + 45;
+    return [{ x:ex, y:ay }, { x:bx, y:by }];
+  }
+  const sa = ax < RC ? 0 : 1;
+  if (sa === sb) return [{ x:bx, y:by }];
+  let best = null, bc = 1e9;
+  for (const b of G.bridges) if (b.state === 'ok'){
+    const p1 = sa === 0 ? RL - 45 : RR + 45, p2 = sa === 0 ? RR + 45 : RL - 45;
+    const c = Math.hypot(ax - p1, ay - b.y) + Math.hypot(bx - p2, by - b.y);
+    if (c < bc){ bc = c; best = [{ x:p1, y:b.y }, { x:p2, y:b.y }, { x:bx, y:by }]; }
+  }
+  return best;
+}
+function stepTo(u, tx, ty, spd, dt){
+  const dx = tx - u.x, dy = ty - u.y, d = Math.hypot(dx, dy);
+  if (d < 0.5) return 0;
+  const s = Math.min(d, spd * dt), nx = u.x + dx / d * s, ny = u.y + dy / d * s;
+  if (passable(nx, ny)){ u.x = nx; u.y = ny; }
+  else if (passable(nx, u.y)) u.x = nx;
+  else if (passable(u.x, ny)) u.y = ny;
+  return d - s;
+}
+// path-following walk; returns true on arrival
+function walk(u, tx, ty, dt, arrive = 8){
+  if (!u.dest || Math.abs(u.dest.x - tx) > 20 || Math.abs(u.dest.y - ty) > 20 || u.repath <= 0){
+    u.dest = { x:tx, y:ty }; u.path = pathTo(u.x, u.y, tx, ty); u.repath = 3;
+  }
+  u.repath -= dt;
+  if (Math.hypot(tx - u.x, ty - u.y) <= arrive) return true;
+  if (!u.path || !u.path.length){ u.blocked = !u.path; return false; }
+  u.blocked = false;
+  const p = u.path[0];
+  const rem = stepTo(u, p.x, p.y, u.spd, dt);
+  if (rem < (u.path.length > 1 ? 6 : arrive)) u.path.shift();
+  return false;
+}
+
+// ============================================================ factories
+function mkB(kind, x, y, owner, o = {}){
+  const d = BDEF[kind];
+  const b = { id:NID++, kind, x, y, r:d.r, owner, name:kind, hp:d.hp || 0, maxHp:d.hp || 0,
+    inv:{ stone:0, concrete:0, supplies:0 }, state:'ok', repNeed:0, repStock:0, repProg:0, prodT:0,
+    cap:0, capT:-1, gar:[], cd:0, workers:0, threat:false, contested:false, ...o };
+  G.bld.push(b); return b;
+}
+function mkU(type, team, x, y, o = {}){
+  const s = ST[type];
+  const u = { id:NID++, type, team, x, y, hp:s.hp, maxHp:s.hp, spd:s.spd, r:s.r, cd:Math.random(),
+    mode:'guard', gx:x, gy:y, gr:170, ox:rnd(-25, 25), oy:rnd(-25, 25), path:null, dest:null, repath:0,
+    scanT:Math.random() * .3, tgt:null, chase:null, job:null, jobT:0, ...o };
+  G.units.push(u); return u;
+}
+function mkT(team, x, y){
+  G.truckNum[team]++;
+  const t = { id:NID++, isT:true, team, x, y, a:team ? Math.PI : 0, v:0, hp:320, maxHp:320, r:16,
+    cargo:{ stone:0, concrete:0, supplies:0 }, cap:20, pax:[], paxCap:6, driver:null, hired:null, route:null,
+    rs:'', rt:0, tick:0, status:'Parked', stopT:0, civT:0, path:null, dest:null, repath:0, stuck:0, rev:0,
+    num:G.truckNum[team] };
+  G.trucks.push(t); return t;
+}
+const cargoN = t => t.cargo.stone + t.cargo.concrete + t.cargo.supplies;
+const tName = t => (t.team ? 'R-' : 'B-') + t.num;
+function msg(s, c = '#dfe6dc'){ G.msgs.push({ s, c, t:G.t }); if (G.msgs.length > 40) G.msgs.shift(); }
+function floatTxt(x, y, s, c){ G.fx.push({ k:'txt', x, y, s, c, t:1.2, m:1.2 }); }
+
+// ============================================================ inventories
+function capOf(b, res){
+  if (b.kind === 'hq') return 120;
+  if (b.kind === 'depot') return 50;
+  if (b.kind === 'quarry') return res === 'stone' ? 40 : 0;
+  if (b.kind === 'plant') return res === 'stone' ? 40 : res === 'concrete' ? 30 : 0;
+  return 0;
+}
+const isFac = b => b.kind === 'quarry' || b.kind === 'plant';
+function canWithdraw(b, res, team){
+  if (b.owner !== team) return false;
+  if (b.kind === 'hq' || b.kind === 'depot') return true;
+  if (b.kind === 'quarry') return res === 'stone';
+  if (b.kind === 'plant') return res === 'concrete';
+  return false;
+}
+const avail = (b, res, team) => canWithdraw(b, res, team) ? b.inv[res] : 0;
+function room(b, res, team){
+  if (b.kind === 'bridge') return b.state === 'damaged' && res === 'stone' ? Math.max(0, b.repNeed - b.repStock) : 0;
+  if (b.owner !== team) return 0;
+  if (b.kind === 'bp') return Math.max(0, (b.need[res] || 0) - (b.stock[res] || 0));
+  if (isFac(b) && b.state === 'damaged') return res === 'stone' ? Math.max(0, b.repNeed - b.repStock) : 0;
+  if (b.kind === 'hq' || b.kind === 'depot') return capOf(b, res) - b.inv[res];
+  if (b.kind === 'plant' && res === 'stone') return capOf(b, 'stone') - b.inv.stone;
+  return 0;
+}
+function deposit(b, res, n, team){
+  const k = Math.min(n, room(b, res, team));
+  if (k <= 0) return 0;
+  if (b.kind === 'bridge' || (isFac(b) && b.state === 'damaged')) b.repStock += k;
+  else if (b.kind === 'bp') b.stock[res] = (b.stock[res] || 0) + k;
+  else b.inv[res] += k;
+  return k;
+}
+function stockAt(b, res){
+  if (b.kind === 'bp') return b.stock[res] || 0;
+  if (b.kind === 'bridge' || (isFac(b) && b.state === 'damaged')) return b.repStock;
+  return b.inv[res] || 0;
+}
+
+// ============================================================ init
+function init(){
+  NID = 1;
+  G = { t:0, units:[], trucks:[], bld:[], fx:[], msgs:[], bridges:[], speed:1, paused:false, over:null,
+    sel:null, build:null, filter:'all', draft:null, zoom:.85, cam:{ x:400, y:1100 }, mx:0, my:0, mouseDown:false,
+    truckNum:[0, 0], sites:[{}, {}], F:[], decor:[], uiT:0 };
+  G.bridges = [450, 1100, 1750].map((y, i) => mkB('bridge', RC, y, -1, {
+    name:['North Bridge', 'Central Bridge', 'South Bridge'][i], state:i === 1 ? 'damaged' : 'ok', repNeed:i === 1 ? 15 : 0 }));
+  const names = [['Kessenburg', 'Kessen Quarry', 'Kessen Concrete Works', 'Ridge Quarry'],
+                 ['Varnhold', 'Varn Quarry', 'Varn Concrete Works', 'Marsh Quarry']];
+  for (const team of [0, 1]){
+    const m = (x, y) => team ? [W - x, H - y] : [x, y];
+    const city = mkB('city', ...m(110, 1100), team, { name:names[team][0] });
+    const hq = mkB('hq', ...m(390, 1100), team, { name:(team ? 'Red' : 'Blue') + ' HQ' });
+    hq.inv = { stone:40, concrete:0, supplies:40 };
+    const q = mkB('quarry', ...m(650, 430), -1, { name:names[team][1], state:'damaged', repNeed:8 });
+    const p = mkB('plant', ...m(820, 1720), -1, { name:names[team][2], state:'damaged', repNeed:20 });
+    const c = mkB('quarry', ...m(1450, 330), -1, { name:names[team][3], state:'damaged', repNeed:12 });
+    G.sites[team] = { q, p, c };
+    G.F[team] = { team, city, hq, cas:0, conf:70, status:'Stable', withdrawn:false, collapse:null, pop:CFG.pop,
+      dispT:4, supT:0, salT:0, truckT:0, warned:{} };
+    const dir = team ? -1 : 1;
+    for (let i = 0; i < 3; i++) mkU('inf', team, hq.x + dir * 80, hq.y - 30 + i * 30);
+    for (let i = 0; i < 2; i++) mkU('eng', team, hq.x + dir * 60, hq.y + 60 + i * 20);
+    const t = mkT(team, hq.x + dir * 110, hq.y + 90);
+    t.a = team ? Math.PI : 0;
+  }
+  G.player = mkU('player', 0, 470, 1100, { mode:'player', respawn:0 });
+  AIs[1] = mkAI(1);
+  AIs[0] = location.search.includes('autotest') ? mkAI(0) : null;
+  // cosmetic decor (ruins, trees, craters)
+  let seed = 7; const sr = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 420; i++){
+    const x = sr() * W, y = sr() * H, k = sr();
+    if (x > RL - 30 && x < RR + 30) continue;
+    G.decor.push({ x, y, k:k < .45 ? 'tree' : k < .75 ? 'crater' : 'ruin', s:6 + sr() * 16, a:sr() * 3 });
+  }
+  const roads = [[110, 1100, 390, 1100], [390, 1100, 650, 430], [390, 1100, 820, 1720], [390, 1100, RL - 40, 1100],
+    [650, 430, 1450, 330], [650, 430, RL - 40, 450], [820, 1720, RL - 40, 1750], [1450, 330, RL - 40, 450]];
+  G.roads = [];
+  for (const r of roads){ G.roads.push(r); G.roads.push([W - r[0], H - r[1], W - r[2], H - r[3]]); }
+  msg('Secure Kessen Quarry (north) and the Concrete Works (south) with infantry.', '#ffcf4a');
+  msg('Then bring engineers and stone by truck to repair them.', '#ffcf4a');
+}
+
+// ============================================================ queries
+const alive = e => e && !e.dead && !e.gone;
+const isCombat = u => u.type === 'inf' || u.type === 'eng' || u.type === 'player';
+const onMap = u => !u.inVeh && !u.gar && !u.down && alive(u);
+function pers(team){ let n = 0; for (const u of G.units) if (u.team === team && alive(u) && (u.type === 'inf' || u.type === 'eng' || u.type === 'driver')) n++; return n; }
+function enemyCombatNear(team, x, y, r){
+  for (const u of G.units) if (u.team !== team && isCombat(u) && onMap(u) && Math.hypot(u.x - x, u.y - y) < r) return u;
+  for (const b of G.bld) if (b.kind === 'bunker' && b.owner >= 0 && b.owner !== team && b.gar.length && Math.hypot(b.x - x, b.y - y) < r + 60) return b;
+  return null;
+}
+function findTarget(team, x, y, range){
+  let best = null, bs = 1e9;
+  for (const u of G.units){
+    if (u.team === team || !onMap(u)) continue;
+    const d = Math.hypot(u.x - x, u.y - y); if (d > range) continue;
+    const s = d + (u.type === 'crew' || u.type === 'driver' ? 120 : 0);
+    if (s < bs){ bs = s; best = u; }
+  }
+  for (const t of G.trucks){
+    if (t.team === team || !alive(t)) continue;
+    const d = Math.hypot(t.x - x, t.y - y); if (d > range) continue;
+    if (d + 60 < bs){ bs = d + 60; best = t; }
+  }
+  for (const b of G.bld){
+    if (!b.maxHp || b.owner < 0 || b.owner === team || !alive(b)) continue;
+    const d = Math.hypot(b.x - x, b.y - y) - b.r; if (d > range) continue;
+    if (d + 150 < bs){ bs = d + 150; best = b; }
+  }
+  return best;
+}
+function nearestBld(p, r, filt){
+  let best = null, bd = r;
+  for (const b of G.bld){ if (!alive(b) || (filt && !filt(b))) continue; const d = D(p, b) - b.r; if (d < bd){ bd = d; best = b; } }
+  return best;
+}
+function nearestTruck(p, r, team){
+  let best = null, bd = r;
+  for (const t of G.trucks){ if (!alive(t) || (team != null && t.team !== team)) continue; const d = D(p, t); if (d < bd){ bd = d; best = t; } }
+  return best;
+}
+const atBld = t => nearestBld(t, 75, b => b.kind !== 'city');
+
+// ============================================================ combat
+function fire(src, tgt, dmg, team){
+  const isB = !!tgt.kind;
+  const hit = isB || Math.random() < .72;
+  let ex = tgt.x, ey = tgt.y;
+  if (!hit){ ex += rnd(-20, 20); ey += rnd(-20, 20); }
+  G.fx.push({ k:'tr', x1:src.x, y1:src.y, x2:ex, y2:ey, t:.09, c:team ? '#ffc0a8' : '#c8e6ff' });
+  if (hit) hurt(tgt, dmg, team);
+}
+function hurt(e, d, byTeam){
+  if (!alive(e)) return;
+  if (e.kind){ if (!e.maxHp) return; e.hp -= d; if (e.hp <= 0) killB(e); }
+  else if (e.isT){ e.hp -= d; e.lastHit = G.t; if (e.hp <= 0) killT(e); }
+  else { e.hp -= d; if (e.hp <= 0) killU(e, byTeam); }
+}
+function killU(u){
+  if (u.dead || u.down) return;
+  u.dead = true;
+  if (u.inVeh){ const t = u.inVeh; t.pax = t.pax.filter(x => x !== u); if (t.driver === u) t.driver = null; u.inVeh = null; }
+  if (u.gar){ u.gar.gar = u.gar.gar.filter(x => x !== u); u.gar = null; }
+  G.fx.push({ k:'boom', x:u.x, y:u.y, t:.4, m:.4, r:8, c:'#a33' });
+  if (u.type === 'crew') casualty(u.team, u);
+  if (u.type === 'player'){
+    u.dead = false; u.down = true; u.respawn = 8; u.hp = 0;
+    for (const f of G.units) if (f.mode === 'follow'){ f.mode = 'guard'; f.gx = f.x; f.gy = f.y; }
+    msg('Commander down! Redeploying at HQ in 8s.', '#ff5a4a');
+  }
+  if (u.type === 'driver' && u.truck && u.truck.hired === u) u.truck.hired = null;
+}
+function casualty(team, u){
+  const f = G.F[team];
+  f.cas++; f.conf = Math.max(0, f.conf - 15);
+  const ratio = f.cas / CFG.cas;
+  const who = team === 0 ? 'Our' : 'Enemy';
+  msg(`${who} civilian worker killed near ${u.job ? u.job.name : 'the road'} (${f.cas}/${CFG.cas}).`, team === 0 ? '#ff8a6a' : '#c9a0a0');
+  if (ratio >= 1 && !f.withdrawn) withdraw(f);
+  else if (ratio >= .7 && !f.warned.r){ f.warned.r = true; msg(`${f.city.name} RESTRICTS recruitment — further losses and they will withdraw for good.`, team === 0 ? '#ff5a4a' : '#ffcf4a'); }
+  else if (ratio >= .4 && !f.warned.w){ f.warned.w = true; msg(`${f.city.name} is losing confidence in ${team === 0 ? 'us' : 'the Red faction'}.`, '#ffcf4a'); }
+}
+function withdraw(f){
+  f.withdrawn = true; f.collapse = CFG.collapse; f.status = 'WITHDRAWN';
+  for (const u of G.units) if (u.type === 'crew' && u.team === f.team && alive(u) && !u.inVeh) setSt(u, 'walkHome');
+  if (f.team === 0) msg(`${f.city.name} has WITHDRAWN SUPPORT. Faction collapse in ${fmt(CFG.collapse)} — win with what you have left!`, '#ff5a4a');
+  else msg(`${f.city.name} has withdrawn support from the Red faction. They collapse in ${fmt(CFG.collapse)}.`, '#7fdc6a');
+}
+function killT(t){
+  if (t.dead) return;
+  t.dead = true;
+  G.fx.push({ k:'boom', x:t.x, y:t.y, t:.8, m:.8, r:34, c:'#f93' });
+  for (const u of [...t.pax]){ unboard(u, t); hurt(u, rnd(20, 75), 1 - t.team); }
+  if (t.driver === 'player'){ const p = G.player; p.inVeh = null; p.x = t.x; p.y = t.y + 20; hurt(p, 40, 1 - t.team); }
+  else if (t.driver){ const d = t.driver; d.inVeh = null; d.x = t.x; d.y = t.y + 15; d.mode = 'idleD'; d.truck = null; hurt(d, rnd(15, 55), 1 - t.team); }
+  t.driver = null;
+  if (t.team === 0) msg(`Truck ${tName(t)} destroyed! Cargo lost.`, '#ff5a4a');
+  if (G.sel === t) G.sel = null;
+  if (G.draft && G.draft.truck === t) G.draft = null;
+}
+function killB(b){
+  if (b.dead) return;
+  b.dead = true;
+  G.fx.push({ k:'boom', x:b.x, y:b.y, t:1, m:1, r:b.r + 20, c:'#f93' });
+  for (const u of b.gar){ u.gar = null; u.x = b.x + rnd(-20, 20); u.y = b.y + rnd(-20, 20); }
+  b.gar = [];
+  if (b.kind === 'hq') endGame(1 - b.owner, `${b.owner === 0 ? 'Your' : 'The enemy'} HQ was destroyed.`);
+  else if (b.owner === 0) msg(`${b.name} destroyed.`, '#ff5a4a');
+  else msg(`Enemy ${b.name} destroyed.`, '#7fdc6a');
+  if (G.sel === b) G.sel = null;
+}
+function endGame(winner, reason){
+  if (G.over) return;
+  G.over = { winner, reason };
+  const f = G.F[0];
+  $('endCard').innerHTML = `<h1 style="color:${winner === 0 ? '#7fdc6a' : '#ff5a4a'}">${winner === 0 ? 'VICTORY' : 'DEFEAT'}</h1>
+    <p>${reason}</p><p class="dim">Match time ${fmt(G.t)} · your civilian casualties ${f.cas}/${CFG.cas} · enemy ${G.F[1].cas}/${CFG.cas}</p>
+    <button class="big" onclick="location.reload()">New match</button>`;
+  $('end').style.display = 'flex';
+}
+
+// ============================================================ vehicles: boarding
+function board(u, t){
+  if (t.pax.length >= t.paxCap || u.inVeh) return false;
+  if (u.gar){ u.gar.gar = u.gar.gar.filter(x => x !== u); u.gar = null; }
+  u.inVeh = t; t.pax.push(u); u.path = null; u.dest = null; u.job = null;
+  return true;
+}
+function unboard(u, t){
+  t.pax = t.pax.filter(x => x !== u);
+  u.inVeh = null;
+  for (let i = 0; i < 12; i++){
+    const a = Math.random() * 6.28, r = 20 + i * 3, x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r;
+    if (passable(x, y)){ u.x = x; u.y = y; break; }
+  }
+  u.path = null; u.dest = null;
+}
+function setRoute(t, r){ t.route = r; t.rs = r && r.mode === 'shuttle' ? 'toCity' : 'toA'; t.rt = 0; t.path = null; t.dest = null; }
+const hasShuttle = team => G.trucks.some(t => alive(t) && t.team === team && t.route && t.route.mode === 'shuttle' && t.driver && t.driver !== 'player');
+
+// ============================================================ vehicles: driving
+function moveT(t, dt){
+  const c = Math.cos(t.a), s = Math.sin(t.a), sg = t.v >= 0 ? 1 : -1;
+  const nx = t.x + c * t.v * dt, ny = t.y + s * t.v * dt;
+  if (passable(nx, ny) && passable(nx + c * 15 * sg, ny + s * 15 * sg)){ t.x = nx; t.y = ny; return true; }
+  t.v *= .3; return false;
+}
+function brake(t, dt){ t.v *= Math.pow(.02, dt); if (Math.abs(t.v) < 1) t.v = 0; else moveT(t, dt); }
+function steer(t, tx, ty, dt, last, ar){
+  if (t.rev > 0){ t.rev -= dt; t.v = -55; t.a += 1.4 * dt; moveT(t, dt); return; }
+  const da = angDiff(Math.atan2(ty - t.y, tx - t.x), t.a);
+  t.a += clamp(da, -2.4 * dt, 2.4 * dt);
+  let tv = Math.abs(da) > 1 ? 45 : 165;
+  if (last){ const d = Math.hypot(tx - t.x, ty - t.y) - ar; if (d < 90) tv = Math.min(tv, 40 + d); }
+  t.v += clamp(tv - t.v, -280 * dt, 140 * dt);
+  if (!moveT(t, dt)){ t.stuck += dt; if (t.stuck > .8){ t.rev = .9; t.stuck = 0; } }
+  else t.stuck = Math.max(0, t.stuck - dt * .5);
+}
+function driveTo(t, b, dt){
+  const ar = (b.r || 20) + 26;
+  if (Math.hypot(b.x - t.x, b.y - t.y) < ar){ brake(t, dt); return true; }
+  if (t.dest !== b || t.repath <= 0){ t.dest = b; t.path = pathTo(t.x, t.y, b.x, b.y); t.repath = 2.5; }
+  t.repath -= dt;
+  if (!t.path || !t.path.length){ brake(t, dt); t.noPath = true; return false; }
+  t.noPath = false;
+  let p = t.path[0];
+  if (t.path.length > 1 && Math.hypot(p.x - t.x, p.y - t.y) < 26){ t.path.shift(); p = t.path[0]; }
+  steer(t, p.x, p.y, dt, t.path.length === 1, ar);
+  return false;
+}
+function playerDrive(t, dt){
+  const k = G.keys;
+  const f = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
+  const s = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+  if (f > 0) t.v += (t.v < 0 ? 380 : 220) * dt;
+  else if (f < 0) t.v -= (t.v > 0 ? 380 : 170) * dt;
+  else t.v *= Math.pow(.2, dt);
+  t.v = clamp(t.v, -80, 205);
+  t.a += s * 2.6 * dt * clamp(Math.abs(t.v) / 60, .3, 1) * (t.v < -2 ? -1 : 1);
+  if (!moveT(t, dt)) t.v = 0;
+  t.status = 'Driven by you';
+}
+function updTruck(t, dt){
+  if (t.driver === 'player') playerDrive(t, dt);
+  else if (t.driver) npcDrive(t, dt);
+  else { brake(t, dt); t.status = t.route ? 'Route set — needs a driver' : 'Parked (no driver)'; }
+  if (Math.abs(t.v) < 12) t.stopT += dt; else t.stopT = 0;
+  t.civT -= dt;
+  if (t.stopT > .35 && t.civT <= 0 && (t.driver === 'player' || (t.route && t.route.mode === 'shuttle' && t.driver))){ t.civT = .4; civStop(t); }
+  for (const u of t.pax){ u.x = t.x; u.y = t.y; }
+  if (t.driver && t.driver !== 'player'){ t.driver.x = t.x; t.driver.y = t.y; }
+}
+function npcDrive(t, dt){
+  const r = t.route, hq = G.F[t.team].hq;
+  if (!r){ t.status = 'Idle — awaiting route'; brake(t, dt); return; }
+  if (r.mode === 'shuttle') return shuttle(t, dt);
+  if (!alive(r.a) || !alive(r.b)){ t.route = null; t.status = 'Route broken (site gone)'; return; }
+  const th = r.retreat && enemyCombatNear(t.team, t.x, t.y, 230);
+  if (th && t.rs !== 'retreat'){ t.rs = 'retreat'; t.rt = 0; if (t.team === 0 && G.t - (t.warnT || -99) > 20){ t.warnT = G.t; msg(`Truck ${tName(t)} under threat — retreating to HQ.`, '#ffcf4a'); } }
+  switch (t.rs){
+    case 'retreat':
+      t.status = 'Retreating — threatened';
+      if (!alive(hq) || driveTo(t, hq, dt)){
+        t.rt += dt;
+        if (t.rt > 8 && !enemyCombatNear(t.team, t.x, t.y, 330)) t.rs = cargoN(t) > 0 ? 'toB' : 'toA';
+      }
+      break;
+    case 'toA':
+      t.status = `→ ${r.a.name} to load ${RESN[r.res]}`;
+      if (driveTo(t, r.a, dt)){ t.rs = 'load'; t.rt = 0; }
+      break;
+    case 'load': {
+      brake(t, dt); t.rt += dt; t.tick -= dt;
+      dumpOther(t, r.a, r.res);
+      const c = t.cargo[r.res];
+      if (!r.once && c === 0 && stockAt(r.b, r.res) >= r.target){ t.status = `Holding: ${r.b.name} at stock target (${r.target})`; break; }
+      if (!r.once && room(r.b, r.res, t.team) <= 0 && c === 0){ t.status = `Holding: ${r.b.name} cannot accept ${RESN[r.res]}`; break; }
+      if (r.once && room(r.b, r.res, t.team) <= 0){ t.route = null; t.status = 'Task no longer needed'; break; }
+      const want = r.once ? Math.min(t.cap, r.amount) : t.cap;
+      const a = avail(r.a, r.res, t.team);
+      if (t.tick <= 0 && c < want && a > 0 && cargoN(t) < t.cap){ r.a.inv[r.res]--; t.cargo[r.res]++; t.tick = .18; }
+      const c2 = t.cargo[r.res];
+      const min = r.once ? want : Math.min(r.min, t.cap);
+      if (c2 >= want || (c2 >= min && a === 0) || (r.once && t.rt > 12 && c2 > 0)){ t.rs = 'toB'; t.rt = 0; }
+      else t.status = a > 0 ? `Loading ${RESN[r.res]} ${c2}/${want}` : `Waiting for min load ${c2}/${min} at ${r.a.name}`;
+      break;
+    }
+    case 'toB':
+      t.status = `→ ${r.b.name} with ${t.cargo[r.res]} ${RESN[r.res]}`;
+      if (driveTo(t, r.b, dt)){ t.rs = 'unload'; t.rt = 0; }
+      break;
+    case 'unload':
+      brake(t, dt); t.tick -= dt;
+      if (t.tick > 0) break;
+      dumpOther(t, r.b, r.res);
+      if (t.cargo[r.res] > 0 && deposit(r.b, r.res, 1, t.team)){ t.cargo[r.res]--; t.tick = .14; t.status = `Unloading at ${r.b.name}`; }
+      else if (t.cargo[r.res] === 0){
+        if (r.once){ t.route = null; t.status = 'Task complete'; }
+        else t.rs = 'toA';
+      } else if (r.once){ t.route = null; t.status = 'Task complete (destination full)'; }
+      else { t.rt += .5; t.tick = .5; t.status = `${r.b.name} is full — waiting`; if (t.rt > 6) t.rs = 'toA'; }
+      break;
+    default: t.rs = 'toA';
+  }
+}
+// leftover cargo from an earlier job is handed over wherever it is accepted
+function dumpOther(t, b, keep){
+  for (const r of RES) if (r !== keep && t.cargo[r] > 0) t.cargo[r] -= deposit(b, r, t.cargo[r], t.team);
+}
+function shuttleDest(t){
+  const set = new Set();
+  for (const u of t.pax) if (u.type === 'crew' && u.dir === 'work' && jobOk(u)) set.add(u.job);
+  if (t.pax.length < t.paxCap)
+    for (const u of G.units) if (u.type === 'crew' && u.team === t.team && alive(u) && !u.inVeh && u.st === 'offShift' && u.job && alive(u.job)) set.add(u.job);
+  let best = null, bd = 1e9;
+  for (const b of set){ const d = D(t, b); if (d < b.r + 60) continue; if (d < bd){ bd = d; best = b; } }
+  return best;
+}
+function shuttle(t, dt){
+  const city = G.F[t.team].city;
+  const th = t.route.retreat !== false && enemyCombatNear(t.team, t.x, t.y, 230);
+  if (th && t.rs !== 'sret'){ t.rs = 'sret'; t.rt = 0; if (t.team === 0) msg(`Shuttle ${tName(t)} threatened — returning to ${city.name}.`, '#ffcf4a'); }
+  switch (t.rs){
+    case 'sret':
+      t.status = 'Shuttle retreating to city';
+      if (driveTo(t, city, dt)){ t.rt += dt; if (t.rt > 6 && !th) t.rs = 'city'; }
+      break;
+    case 'city': {
+      brake(t, dt); t.rt += dt;
+      const waiting = G.units.some(u => u.type === 'crew' && u.team === t.team && alive(u) && !u.inVeh && u.st === 'waitBus');
+      if (t.rt > 3 && (t.pax.length >= t.paxCap || !waiting)){
+        const d = shuttleDest(t);
+        if (d){ t.sdest = d; t.rs = 'toFac'; } else t.status = 'Shuttle waiting at city';
+      } else t.status = `Boarding workers (${t.pax.length}/${t.paxCap})`;
+      break;
+    }
+    case 'toFac':
+      if (!alive(t.sdest)){ t.rs = 'toCity'; break; }
+      t.status = `Shuttle → ${t.sdest.name}`;
+      if (driveTo(t, t.sdest, dt)){ t.rs = 'fac'; t.rt = 0; }
+      break;
+    case 'fac':
+      brake(t, dt); t.rt += dt; t.status = 'Shuttle: crew change';
+      if (t.rt > 3){ const d = shuttleDest(t); if (d){ t.sdest = d; t.rs = 'toFac'; } else t.rs = 'toCity'; }
+      break;
+    default:
+      t.status = 'Shuttle → city';
+      if (driveTo(t, city, dt)){ t.rs = 'city'; t.rt = 0; }
+  }
+}
+// civilian boarding / alighting rules, shared by manual and shuttle trucks
+function civStop(t){
+  const f = G.F[t.team];
+  const nearCity = D(t, f.city) < f.city.r + 90;
+  for (const u of [...t.pax]){
+    if (u.type !== 'crew') continue;
+    if (u.dir === 'home'){ if (nearCity){ unboard(u, t); goneHome(u, true); } }
+    else if (!jobOk(u)){ if (nearCity){ unboard(u, t); goneHome(u, false); } else u.dir = 'home'; }
+    else if (D(t, u.job) < u.job.r + 75){ unboard(u, t); setSt(u, 'walkWork'); }
+  }
+  for (const u of G.units){
+    if (t.pax.length >= t.paxCap) break;
+    if (u.type !== 'crew' || u.team !== t.team || !onMap(u) || D(u, t) > 130) continue;
+    if (u.st === 'waitBus' || (u.st === 'walkWork' && jobOk(u) && D(t, u.job) > u.job.r + 160)){ if (board(u, t)){ u.st = 'ride'; u.dir = 'work'; } }
+    else if (u.st === 'offShift' || u.st === 'walkHome'){ if (board(u, t)){ u.st = 'ride'; u.dir = 'home'; } }
+  }
+}
+
+// ============================================================ civilians
+const jobOk = u => u.job && alive(u.job) && u.job.owner === u.team && u.job.state === 'ok';
+function setSt(u, st){
+  u.st = st; u.path = null; u.dest = null; u.wt = 0;
+  u.dir = (st === 'offShift' || st === 'walkHome') ? 'home' : (st === 'ride' ? u.dir : 'work');
+}
+const confCap = f => Math.max(0, 100 - 70 * f.cas / CFG.cas);
+function goneHome(u, success){
+  const f = G.F[u.team];
+  u.gone = true; f.pop++;
+  if (success && !f.withdrawn) f.conf = Math.min(confCap(f), f.conf + 2.5);
+}
+function updCrew(u, dt){
+  if (u.inVeh) return;
+  const f = G.F[u.team];
+  if (u.st !== 'flee'){
+    const th = enemyCombatNear(u.team, u.x, u.y, 150);
+    if (th){ u.prev = u.st; u.st = 'flee'; u.fleeT = 3.5; u.fx = th.x; u.fy = th.y; u.path = null; u.dest = null; }
+  }
+  switch (u.st){
+    case 'flee': {
+      u.fleeT -= dt;
+      const dx = u.x - u.fx, dy = u.y - u.fy, d = Math.hypot(dx, dy) || 1;
+      const hx = f.city.x - u.x, hy = f.city.y - u.y, hd = Math.hypot(hx, hy) || 1;
+      stepTo(u, u.x + (dx / d + .6 * hx / hd) * 50, u.y + (dy / d + .6 * hy / hd) * 50, u.spd * 1.4, dt);
+      if (u.fleeT <= 0){
+        let p = u.prev || 'walkHome';
+        if (p === 'working' || p === 'waitBus') p = 'walkWork';
+        if (f.withdrawn) p = 'walkHome';
+        setSt(u, p);
+      }
+      break;
+    }
+    case 'waitBus':
+      u.wt += dt;
+      if (f.withdrawn){ setSt(u, 'walkHome'); break; }
+      if (u.wt > CFG.busWait || !hasShuttle(u.team)) setSt(u, 'walkWork');
+      break;
+    case 'walkWork':
+      if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
+      if (walk(u, u.job.x + u.ox * 1.2, u.job.y + u.oy * 1.2, dt, 10)){ setSt(u, 'working'); u.shift = CFG.shift; f.conf = Math.min(confCap(f), f.conf + 1); }
+      break;
+    case 'working':
+      if (!jobOk(u) || f.withdrawn){ setSt(u, 'walkHome'); break; }
+      u.shift -= dt;
+      if (u.shift <= 0) setSt(u, 'offShift');
+      break;
+    case 'offShift':
+      u.wt += dt;
+      if (u.wt > (hasShuttle(u.team) ? 25 : 1)) setSt(u, 'walkHome');
+      break;
+    case 'walkHome':
+      if (walk(u, f.city.x + u.ox, f.city.y + u.oy, dt, 40)) goneHome(u, true);
+      break;
+    default: setSt(u, 'walkHome');
+  }
+}
+function crewAssigned(b){ let n = 0; for (const u of G.units) if (u.type === 'crew' && alive(u) && u.job === b && u.dir === 'work') n++; return n; }
+function dispatchInterval(f){
+  let i = f.status === 'Warning' ? 6 : f.status === 'Restricted' ? 10 : 3;
+  if (f.conf < 30) i *= 2;
+  return i;
+}
+function factionTick(f, dt){
+  const hq = f.hq;
+  const ratio = f.cas / CFG.cas;
+  if (!f.withdrawn) f.status = ratio >= .7 ? 'Restricted' : ratio >= .4 ? 'Warning' : 'Stable';
+  f.conf = Math.min(f.conf, confCap(f));
+  if (!alive(hq)) return;
+  // bounded recovery: supply allotment from the city, salvage stone, replacement truck
+  f.supT += dt; if (f.supT >= 3.5){ f.supT = 0; if (!f.withdrawn && hq.inv.supplies < 50) hq.inv.supplies++; }
+  f.salT += dt; if (f.salT >= 8){ f.salT = 0; if (hq.inv.stone < 15) hq.inv.stone++; }
+  if (!G.trucks.some(t => alive(t) && t.team === f.team)){
+    f.truckT += dt;
+    if (f.truckT > 40){
+      f.truckT = 0;
+      const t = mkT(f.team, hq.x + (f.team ? -100 : 100), hq.y + 90);
+      if (f.team === 0) msg('A salvaged replacement truck has arrived at HQ.', '#7fdc6a');
+    }
+  } else f.truckT = 0;
+  // civilian dispatch
+  f.dispT -= dt;
+  if (f.dispT <= 0){
+    f.dispT = dispatchInterval(f);
+    if (!f.withdrawn && f.pop > 0){
+      for (const b of G.bld){
+        if (!isFac(b) || b.owner !== f.team || b.state !== 'ok' || b.threat) continue;
+        const need = f.status === 'Restricted' ? Math.min(1, CFG.crew) : CFG.crew;
+        if (crewAssigned(b) < need){
+          const sx = f.city.x + (f.team ? -95 : 95), sy = f.city.y + rnd(-30, 30);
+          const u = mkU('crew', f.team, sx, sy, { job:b });
+          setSt(u, hasShuttle(f.team) ? 'waitBus' : 'walkWork');
+          f.pop--;
+          break;
+        }
+      }
+    }
+  }
+  if (f.collapse != null){
+    f.collapse -= dt;
+    if (f.collapse <= 0) endGame(1 - f.team, f.team === 0 ? `${f.city.name} withdrew its support and your faction collapsed.` : `${f.city.name} abandoned the Red faction. Their war effort collapsed.`);
+  }
+}
+
+// ============================================================ soldiers & engineers
+function guardAt(u, x, y, spread = 35){
+  u.mode = 'guard'; u.gx = x; u.gy = y; u.ox = rnd(-spread, spread); u.oy = rnd(-spread, spread); u.job = null;
+  if (u.gar){ const b = u.gar; b.gar = b.gar.filter(z => z !== u); u.gar = null; u.x = b.x + rnd(-15, 15); u.y = b.y + b.r + 6; }
+}
+function stoneSrc(e, team){
+  if (e.isT && e.cargo.stone > 0) return e;
+  if ((e.kind === 'hq' || e.kind === 'depot') && e.inv.stone > 0) return e;
+  for (const b of G.bld) if (b.owner === team && (b.kind === 'hq' || b.kind === 'depot') && alive(b) && b.inv.stone > 0 && D(b, e) < 260) return b;
+  for (const t of G.trucks) if (t.team === team && alive(t) && t.cargo.stone > 0 && D(t, e) < 140) return t;
+  return null;
+}
+const takeStone = s => { if (s.isT) s.cargo.stone--; else s.inv.stone--; };
+function bpMax(b){ let m = 1; for (const k in b.need) m = Math.min(m, (b.stock[k] || 0) / b.need[k]); return m * b.pts; }
+function jobValid(j, team){
+  const e = j.ent; if (!alive(e)) return false;
+  switch (j.kind){
+    case 'build': return e.owner === team && e.prog < bpMax(e) - .01;
+    case 'repair': return e.state === 'damaged' && e.repStock > e.repProg + .01 && (e.kind === 'bridge' || e.owner === team);
+    case 'fix': return e.owner === team && e.hp < e.maxHp - 1 && !!stoneSrc(e, team);
+    case 'fixT': return e.team === team && e.hp < e.maxHp - 1 && Math.abs(e.v) < 5 && !!stoneSrc(e, team);
+  }
+  return false;
+}
+function findJob(u){
+  const R = u.gr + 230; let best = null, bd = 1e9;
+  const consider = (ent, kind) => { const d = Math.hypot(ent.x - u.gx, ent.y - u.gy); if (d < R && d < bd){ const j = { kind, ent }; if (jobValid(j, u.team)){ bd = d; best = j; } } };
+  for (const b of G.bld){
+    if (!alive(b)) continue;
+    if (b.kind === 'bp') consider(b, 'build');
+    else if (b.state === 'damaged') consider(b, 'repair');
+    else if (b.maxHp && b.hp < b.maxHp - 1) consider(b, 'fix');
+  }
+  for (const t of G.trucks) if (alive(t) && t.hp < t.maxHp - 1) consider(t, 'fixT');
+  return best;
+}
+function completeBP(b){
+  b.dead = true;
+  const nb = mkB(b.bk, b.x, b.y, b.owner, { name:BPDEF[b.bk].name });
+  if (b.owner === 0) msg(`${nb.name} completed.`, '#7fdc6a');
+  if (G.sel === b) G.sel = nb;
+}
+function engWork(u, dt){
+  u.jobT -= dt;
+  if (u.job && !jobValid(u.job, u.team)) u.job = null;
+  if (!u.job && u.jobT <= 0){ u.job = findJob(u); u.jobT = 1; }
+  if (!u.job) return false;
+  const e = u.job.ent, rr = (e.r || 16) + 14;
+  if (Math.hypot(e.x - u.x, e.y - u.y) > rr){ walk(u, e.x + u.ox * .4, e.y + u.oy * .4, dt, rr - 4); return true; }
+  u.workFx = G.t;
+  switch (u.job.kind){
+    case 'build':
+      e.prog = Math.min(e.prog + dt, bpMax(e));
+      if (e.prog >= e.pts - 1e-6) completeBP(e);
+      break;
+    case 'repair':
+      e.repProg = Math.min(e.repProg + dt * .8, e.repStock);
+      if (e.repProg >= e.repNeed - 1e-6){
+        e.state = 'ok'; e.repProg = 0; e.repStock = 0;
+        if (e.kind === 'bridge') msg(`${e.name} repaired — the crossing is open.`, '#7fdc6a');
+        else if (e.owner === 0) msg(`${e.name} restored. Civilian crews are being dispatched from ${G.F[0].city.name}.`, '#7fdc6a');
+      }
+      break;
+    case 'fix': case 'fixT': {
+      const amt = 30 * dt;
+      e.hp = Math.min(e.maxHp, e.hp + amt); e.fixAcc = (e.fixAcc || 0) + amt;
+      if (e.fixAcc >= 50){ e.fixAcc -= 50; const s = stoneSrc(e, u.team); if (s) takeStone(s); else u.job = null; }
+      break;
+    }
+  }
+  return true;
+}
+function updSoldier(u, dt){
+  const s = ST[u.type];
+  u.cd -= dt;
+  if (u.inVeh) return;
+  if (u.gar){ u.x = u.gar.x; u.y = u.gar.y; return; }
+  u.scanT -= dt;
+  if (u.scanT <= 0){
+    u.scanT = .3;
+    u.tgt = findTarget(u.team, u.x, u.y, s.range);
+    u.chase = (!u.tgt && u.type === 'inf' && u.mode === 'guard') ? findTarget(u.team, u.x, u.y, s.range + 170) : null;
+  }
+  if (u.tgt && (!alive(u.tgt) || u.tgt.inVeh || u.tgt.gar)) u.tgt = null;
+  const tgt = u.tgt;
+  if (tgt && u.cd <= 0){ fire(u, tgt, s.dmg, u.team); u.cd = s.rof * rnd(.85, 1.15); }
+  if (u.type === 'eng' && u.mode === 'guard' && engWork(u, dt)) return;
+  if (u.mode === 'follow'){
+    const p = G.player;
+    if (p.down){ guardAt(u, u.x, u.y); return; }
+    const ang = u.fi * 2.39996, rad = 30 + Math.sqrt(u.fi + 1) * 15;
+    walk(u, p.x + Math.cos(ang) * rad, p.y + Math.sin(ang) * rad, dt, 10);
+    return;
+  }
+  if (u.mode === 'guard'){
+    if (tgt) return; // hold position and shoot
+    const c = u.chase;
+    if (c && alive(c) && Math.hypot(c.x - u.gx, c.y - u.gy) < u.gr + s.range * .6){ walk(u, c.x, c.y, dt, s.range * .85); return; }
+    walk(u, u.gx + u.ox, u.gy + u.oy, dt, 8);
+    if (u.type === 'inf'){
+      for (const b of G.bld){
+        if (b.kind === 'bunker' && b.owner === u.team && alive(b) && b.gar.length < 4 && Math.hypot(b.x - u.gx, b.y - u.gy) < b.r + 40 && D(u, b) < b.r + 16){
+          b.gar.push(u); u.gar = b; break;
+        }
+      }
+    }
+  }
+}
+function updDriver(u, dt){
+  if (u.inVeh) return;
+  const hq = G.F[u.team].hq;
+  if (u.mode === 'toTruck'){
+    const t = u.truck;
+    if (!alive(t) || t.driver){ u.mode = 'idleD'; u.truck = null; if (t && t.hired === u) t.hired = null; return; }
+    if (walk(u, t.x, t.y, dt, 26)){ t.driver = u; t.hired = null; u.inVeh = t; if (t.team === 0) msg(`Driver took the wheel of ${tName(t)}.`, '#7fdc6a'); }
+    return;
+  }
+  u.mode = 'idleD';
+  if (alive(hq)) walk(u, hq.x + u.ox, hq.y + hq.r + 30 + u.oy * .3, dt, 10);
+}
+
+// ============================================================ buildings
+function updBuildings(dt){
+  for (const b of G.bld){
+    if (!alive(b)) continue;
+    if (isFac(b) || b.kind === 'depot'){
+      // territory capture
+      const c = [0, 0];
+      for (const u of G.units) if (isCombat(u) && onMap(u) && !u.down && Math.hypot(u.x - b.x, u.y - b.y) < b.r + 70) c[u.team]++;
+      b.contested = c[0] > 0 && c[1] > 0;
+      b.threat = b.owner >= 0 && !!enemyCombatNear(b.owner, b.x, b.y, b.r + 120);
+      if (!b.contested){
+        const T = c[0] > 0 ? 0 : c[1] > 0 ? 1 : -1;
+        if (T < 0 || b.owner === T){ b.cap = Math.max(0, b.cap - dt); if (b.cap === 0) b.capT = -1; }
+        else {
+          if (b.capT !== T){ b.capT = T; b.cap = 0; }
+          b.cap += dt * (1 + .25 * (Math.min(c[T], 4) - 1));
+          const need = b.owner < 0 ? 6 : 10;
+          if (b.cap >= need) changeOwner(b, T);
+        }
+      }
+    }
+    if (isFac(b)){
+      let w = 0;
+      for (const u of G.units) if (u.type === 'crew' && u.job === b && u.st === 'working' && alive(u) && !u.inVeh) w++;
+      b.workers = w;
+      b.active = false;
+      if (b.owner >= 0 && b.state === 'ok' && w > 0){
+        if (b.kind === 'quarry' && b.inv.stone < capOf(b, 'stone')){
+          b.active = true; b.prodT += dt * w / CFG.crew;
+          if (b.prodT >= 4.5){ b.prodT = 0; b.inv.stone++; floatTxt(b.x, b.y - b.r, '+1 stone', RESC.stone); }
+        } else if (b.kind === 'plant' && b.inv.stone >= 2 && b.inv.concrete < capOf(b, 'concrete')){
+          b.active = true; b.prodT += dt * w / CFG.crew;
+          if (b.prodT >= 6){ b.prodT = 0; b.inv.stone -= 2; b.inv.concrete++; floatTxt(b.x, b.y - b.r, '+1 concrete', RESC.concrete); }
+        }
+      }
+    }
+    if (b.kind === 'bunker' || b.kind === 'hq'){
+      b.cd -= dt;
+      b.gar = b.gar.filter(u => alive(u));
+      const shooters = b.kind === 'hq' ? 1 : b.gar.length;
+      if (shooters && b.cd <= 0){
+        const tg = findTarget(b.owner, b.x, b.y, 265);
+        if (tg){ fire(b, tg, 10, b.owner); b.cd = (b.kind === 'hq' ? 1.1 : .9) / shooters; } else b.cd = .3;
+      }
+    }
+  }
+}
+function changeOwner(b, T){
+  const old = b.owner;
+  b.owner = T; b.cap = 0; b.capT = -1;
+  for (const u of G.units) if (u.type === 'crew' && u.job === b && alive(u) && !u.inVeh && u.team !== T) setSt(u, 'walkHome');
+  if (T === 0) msg(`${b.name} secured${old === 1 ? ' from the enemy' : ''}.`, '#7fdc6a');
+  else if (old === 0) msg(`We lost ${b.name} to the enemy!`, '#ff5a4a');
+}
+function canPlace(x, y, r, team){
+  if (!passable(x, y) || (x > RL - r - 10 && x < RR + r + 10)) return false;
+  for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r]]) if (!passable(x + dx, y + dy)) return false;
+  for (const b of G.bld){ if (!alive(b)) continue; const rr = b.kind === 'bridge' ? 60 : b.r; if (Math.hypot(b.x - x, b.y - y) < rr + r + 14) return false; }
+  const eh = G.F[1 - team].hq;
+  if (alive(eh) && Math.hypot(eh.x - x, eh.y - y) < 350) return false;
+  return true;
+}
+function placeBP(team, bk, x, y){
+  if (!canPlace(x, y, BDEF[bk].r, team)) return null;
+  const d = BPDEF[bk];
+  return mkB('bp', x, y, team, { bk, need:{ ...d.need }, stock:{}, prog:0, pts:d.pts, name:d.name + ' (blueprint)', hp:300, maxHp:300, r:BDEF[bk].r });
+}
+
+// ============================================================ commands (shared by player & AI)
+function recruit(team, type, at){
+  at = at || G.F[team].hq;
+  const say = team === 0;
+  if (!alive(at)) return null;
+  if (pers(team) >= CAP){ if (say) msg(`Personnel cap reached (${CAP}).`, '#ffcf4a'); return null; }
+  const c = COST[type];
+  for (const k in c) if (at.inv[k] < c[k]){ if (say) msg(`Not enough ${RESN[k]} at ${at.name} (${c[k]} needed).`, '#ffcf4a'); return null; }
+  for (const k in c) at.inv[k] -= c[k];
+  const dir = team ? -1 : 1;
+  const u = mkU(type, team, at.x + dir * (at.r + 18) + rnd(-10, 10), at.y + rnd(-at.r, at.r));
+  u.gx = u.x; u.gy = u.y; u.ox = u.oy = 0;
+  if (type === 'driver') u.mode = 'idleD';
+  if (say) msg(`${TYPEN[type]} ready at ${at.name}.`);
+  return u;
+}
+function buyTruck(team){
+  const hq = G.F[team].hq, c = COST.truck, say = team === 0;
+  if (!alive(hq)) return null;
+  for (const k in c) if (hq.inv[k] < c[k]){ if (say) msg(`A truck needs ${c.concrete} concrete + ${c.supplies} supplies at HQ.`, '#ffcf4a'); return null; }
+  for (const k in c) hq.inv[k] -= c[k];
+  const t = mkT(team, hq.x + (team ? -110 : 110), hq.y + rnd(-100, 100));
+  if (say) msg(`Truck ${tName(t)} assembled at HQ.`, '#7fdc6a');
+  return t;
+}
+function hireDriver(team, t){
+  if (!alive(t) || t.driver || alive(t.hired)) return false;
+  let d = G.units.find(u => u.type === 'driver' && u.team === team && alive(u) && u.mode === 'idleD' && !u.inVeh);
+  if (!d) d = recruit(team, 'driver');
+  if (!d) return false;
+  d.mode = 'toTruck'; d.truck = t; t.hired = d;
+  if (team === 0) msg(`A driver is walking from HQ to ${tName(t)}.`);
+  return true;
+}
+function releaseDriver(t){
+  const d = t.driver; if (!d || d === 'player') return;
+  t.driver = null; d.inVeh = null; d.mode = 'idleD'; d.truck = null; d.x = t.x + 20; d.y = t.y + 10;
+}
+
+// ============================================================ player
+function updPlayer(dt){
+  const p = G.player;
+  if (p.down){
+    p.respawn -= dt;
+    if (p.respawn <= 0){ const hq = G.F[0].hq; p.down = false; p.hp = p.maxHp; p.x = hq.x + 90; p.y = hq.y; msg('Commander redeployed at HQ.', '#7fdc6a'); }
+    return;
+  }
+  p.cd -= dt;
+  if (p.inVeh){ p.x = p.inVeh.x; p.y = p.inVeh.y; return; }
+  const k = G.keys;
+  let vx = (k.KeyD || k.ArrowRight ? 1 : 0) - (k.KeyA || k.ArrowLeft ? 1 : 0);
+  let vy = (k.KeyS || k.ArrowDown ? 1 : 0) - (k.KeyW || k.ArrowUp ? 1 : 0);
+  const l = Math.hypot(vx, vy);
+  if (l){ stepTo(p, p.x + vx / l * 50, p.y + vy / l * 50, ST.player.spd, dt); }
+  if (G.mouseDown && !G.build && p.cd <= 0){ p.cd = ST.player.rof; playerShoot(); }
+  if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 2 * dt);
+}
+function playerShoot(){
+  const p = G.player;
+  const ang = Math.atan2(G.my - p.y, G.mx - p.x) + rnd(-.035, .035);
+  const dx = Math.cos(ang), dy = Math.sin(ang);
+  let best = null, bt = ST.player.range;
+  const test = (e, r) => { const ex = e.x - p.x, ey = e.y - p.y, tt = ex * dx + ey * dy; if (tt < 0 || tt > bt) return; if (Math.abs(ex * dy - ey * dx) < r){ bt = tt; best = e; } };
+  for (const u of G.units) if (u.team !== 0 && onMap(u)) test(u, u.r + 4);
+  for (const t of G.trucks) if (t.team !== 0 && alive(t)) test(t, 15);
+  for (const b of G.bld) if (b.owner === 1 && b.maxHp && alive(b)) test(b, b.r);
+  G.fx.push({ k:'tr', x1:p.x, y1:p.y, x2:p.x + dx * bt, y2:p.y + dy * bt, t:.07, c:'#fff6c0' });
+  if (best && (best.kind || Math.random() < .88)) hurt(best, ST.player.dmg, 0);
+}
+function followers(){ return G.units.filter(u => u.team === 0 && u.mode === 'follow' && alive(u) && !u.inVeh); }
+function cmdWhistle(){
+  const p = G.player; let n = followers().length, got = 0;
+  for (const u of G.units){
+    if (u.team !== 0 || !alive(u) || u.inVeh || !(u.type === 'inf' || u.type === 'eng')) continue;
+    if (u.mode === 'follow' || D(u, p) > 230) continue;
+    if (u.gar){ const b = u.gar; b.gar = b.gar.filter(z => z !== u); u.gar = null; u.x = b.x + rnd(-15, 15); u.y = b.y + b.r + 6; }
+    u.mode = 'follow'; u.fi = n++; u.job = null; got++;
+  }
+  G.fx.push({ k:'ring', x:p.x, y:p.y, t:.5, m:.5, r:230, c:'#bfe0ff' });
+  if (got) msg(`${got} unit${got > 1 ? 's' : ''} now following you.`);
+}
+function cmdSend(){
+  const fl = followers().filter(u => G.filter === 'all' || u.type === G.filter);
+  if (!fl.length){ msg(G.filter === 'all' ? 'Nobody is following you. Press F near troops.' : `No ${TYPEN[G.filter]} following you.`, '#ffcf4a'); return; }
+  if (!passable(G.mx, G.my)){ msg('Cannot send troops into the river.', '#ffcf4a'); return; }
+  const spread = 20 + Math.sqrt(fl.length) * 14;
+  for (const u of fl) guardAt(u, G.mx, G.my, spread);
+  let i = 0; for (const u of followers()) u.fi = i++;
+  G.fx.push({ k:'ring', x:G.mx, y:G.my, t:.6, m:.6, r:spread + 20, c:'#7fdc6a' });
+  msg(`${fl.length} unit${fl.length > 1 ? 's' : ''} posted to guard that area.`);
+}
+function cmdBoard(t){
+  let got = 0;
+  for (const u of G.units){
+    if (u.team !== 0 || !alive(u) || u.inVeh || u.gar || !(u.type === 'inf' || u.type === 'eng')) continue;
+    if (D(u, t) > 170 || u.mode !== 'follow' && u.mode !== 'guard') continue;
+    if (!board(u, t)) break;
+    got++;
+  }
+  msg(got ? `${got} boarded ${tName(t)} (${t.pax.length}/${t.paxCap}).` : 'No idle troops nearby to board.', got ? '#dfe6dc' : '#ffcf4a');
+}
+function cmdUnloadPax(t){
+  let n = 0;
+  for (const u of [...t.pax]){
+    unboard(u, t); n++;
+    if (u.type === 'crew'){ setSt(u, u.dir === 'home' ? 'walkHome' : 'walkWork'); }
+    else guardAt(u, t.x, t.y, 40);
+  }
+  if (n) msg(`${n} passenger${n > 1 ? 's' : ''} disembarked.`);
+}
+function toggleVehicle(){
+  const p = G.player;
+  if (p.down) return;
+  if (p.inVeh){
+    const t = p.inVeh;
+    if (Math.abs(t.v) > 40){ msg('Slow down before getting out.', '#ffcf4a'); return; }
+    t.driver = null; p.inVeh = null;
+    for (const a of [Math.PI / 2, -Math.PI / 2, Math.PI, 0]){
+      const x = t.x + Math.cos(t.a + a) * 26, y = t.y + Math.sin(t.a + a) * 26;
+      if (passable(x, y)){ p.x = x; p.y = y; break; }
+    }
+    if (t.route) msg(`${tName(t)} has a route. Hire a driver to automate it.`, '#bfe0ff');
+    return;
+  }
+  const t = nearestTruck(p, 60, 0);
+  if (!t){ msg('No friendly truck within reach.', '#ffcf4a'); return; }
+  if (t.driver){ msg(`${tName(t)} is driven by an NPC — release the driver first (truck panel).`, '#ffcf4a'); return; }
+  t.driver = 'player'; p.inVeh = t; G.sel = null;
+}
+function truckLoad(t, res, n){
+  const b = atBld(t);
+  if (!b){ msg('Park next to a site to load.', '#ffcf4a'); return; }
+  const k = Math.min(n, avail(b, res, t.team), t.cap - cargoN(t));
+  if (k <= 0){ msg(`Nothing to load: ${RESN[res]} at ${b.name}: ${avail(b, res, t.team)}, truck space ${t.cap - cargoN(t)}.`, '#ffcf4a'); return; }
+  b.inv[res] -= k; t.cargo[res] += k;
+}
+function truckUnload(t, res, n){
+  const b = atBld(t);
+  if (!b){ msg('Park next to a site to unload.', '#ffcf4a'); return; }
+  const k = deposit(b, res, Math.min(n, t.cargo[res]), t.team);
+  if (k <= 0){
+    msg(b.owner !== t.team && b.kind !== 'bridge' ? `${b.name} isn't ours yet — secure it with troops first.` : `${b.name} won't accept ${RESN[res]} right now.`, '#ffcf4a');
+    return;
+  }
+  t.cargo[res] -= k;
+}
+function routeKey(){
+  const t = G.player.inVeh;
+  if (!t){ msg('Get in a truck to plan a route (R at the start site, R at the end site).', '#ffcf4a'); return; }
+  const b = atBld(t);
+  if (!G.draft || G.draft.truck !== t || G.draft.b){
+    if (G.draft && G.draft.truck === t && G.draft.b){ saveDraft(); return; }
+    if (!b){ msg('Park next to the site where the route should START, then press R.', '#ffcf4a'); return; }
+    G.draft = { truck:t, a:b, b:null, res:b.kind === 'plant' ? 'concrete' : b.kind === 'quarry' ? 'stone' : 'stone', min:10, target:40, retreat:true };
+    msg(`Route start: ${b.name}. Drive to the destination and press R.`, '#bfe0ff');
+    return;
+  }
+  if (!b || b === G.draft.a){ msg('Park next to a different site for the route END, then press R.', '#ffcf4a'); return; }
+  G.draft.b = b;
+  if (b.kind === 'bp'){ const k = Object.keys(b.need)[0]; G.draft.res = k; }
+  msg(`Route end: ${b.name}. Adjust settings in the panel, press R again (or Save).`, '#bfe0ff');
+}
+function saveDraft(){
+  const d = G.draft; if (!d || !d.b) return;
+  setRoute(d.truck, { mode:'cargo', a:d.a, b:d.b, res:d.res, min:d.min, target:d.target, retreat:d.retreat });
+  msg(`Route saved on ${tName(d.truck)}: ${RESN[d.res]} ${d.a.name} → ${d.b.name}. Exit the truck and hire a driver.`, '#7fdc6a');
+  G.draft = null;
+}
+
+// ============================================================ AI commander (same rules, no avatar)
+function mkAI(team){ return { team, t:2, nextWave:260 / CFG.aggr, wave:0 }; }
+function aiTick(ai, dt){
+  ai.t -= dt; if (ai.t > 0) return; ai.t = 1.5;
+  const T = ai.team, E = 1 - T, f = G.F[T], hq = f.hq;
+  if (!alive(hq)) return;
+  const S = G.sites[T], SE = G.sites[E];
+  const mine = type => G.units.filter(u => u.team === T && u.type === type && alive(u));
+  const inf = mine('inf'), eng = mine('eng'), drv = mine('driver');
+  const trucks = G.trucks.filter(t => alive(t) && t.team === T);
+  const time = G.t;
+  const okFac = b => b.owner === T && b.state === 'ok';
+
+  // drivers for every truck
+  for (const t of trucks) if (!t.driver && !alive(t.hired)) hireDriver(T, t);
+
+  // objectives: sites to hold, with desired infantry count
+  const objs = [{ b:S.q, n:2 }, { b:S.p, n:2 }];
+  if (time > 100 || inf.length >= 6) objs.push({ b:S.c, n:2 });
+  if (time > 380 * (1 / CFG.aggr) && inf.length >= 9) objs.push({ b:SE.c, n:2 });
+  for (const b of G.bld) if (b.kind === 'bunker' && b.owner === T && alive(b)) objs.push({ b, n:1 });
+
+  // posts bookkeeping
+  for (const u of inf){
+    if (u.post && u.post !== 'atk' && !String(u.post).startsWith('def')){
+      const ob = objs.find(o => o.b.id === u.post);
+      if (!ob || !alive(ob.b)){ u.post = null; guardAt(u, hq.x, hq.y, 60); }
+    }
+    if (u.post === 'atk' && (!alive(u.atkB) || (u.atkB.owner === T && isFac(u.atkB)))){
+      if (alive(u.atkB) && u.atkB.owner === T){ u.post = u.atkB.id; if (!objs.some(o => o.b === u.atkB)) objs.push({ b:u.atkB, n:3 }); }
+      else { u.post = null; guardAt(u, hq.x, hq.y, 60); }
+    }
+  }
+  const reserve = () => inf.filter(u => !u.post);
+  for (const o of objs){
+    const have = inf.filter(u => u.post === o.b.id).length;
+    // never trickle units one by one into a site the enemy holds: go as a group or not at all
+    const hostile = o.b.owner === E || enemyCombatNear(T, o.b.x, o.b.y, o.b.r + 200);
+    if (hostile && have < o.n){ if (reserve().length < o.n + 3 - have) continue; o.n += 3; }
+    for (let i = have; i < o.n; i++){
+      const r = reserve(); if (!r.length) break;
+      r.sort((a, b) => D(a, o.b) - D(b, o.b));
+      const u = r[0]; u.post = o.b.id; guardAt(u, o.b.x, o.b.y, o.b.kind === 'bunker' ? 8 : 45);
+    }
+  }
+  // defend own buildings under attack
+  for (const b of G.bld){
+    if (b.owner !== T || !alive(b) || !(b.kind === 'hq' || isFac(b) || b.kind === 'bunker')) continue;
+    const th = enemyCombatNear(T, b.x, b.y, 300);
+    const key = 'def' + b.id;
+    if (th){ for (const u of reserve().slice(0, 4)){ u.post = key; guardAt(u, b.x, b.y, 50); } }
+    else for (const u of inf) if (u.post === key){ u.post = null; guardAt(u, hq.x, hq.y, 60); }
+  }
+  // attack waves
+  if (time > ai.nextWave){
+    const r = reserve();
+    if (r.length >= 4){
+      const cands = G.bld.filter(b => alive(b) && b.owner === E && (isFac(b) || b.kind === 'depot' || b.kind === 'bunker' || b.kind === 'bp'));
+      if (alive(SE.c) && SE.c.owner < 0) cands.push(SE.c);
+      cands.sort((a, b) => D(a, hq) - D(b, hq));
+      let target = cands[0];
+      const ehq = G.F[E].hq;
+      if ((ai.wave >= 3 && ai.wave % 2 === 1) || !target) target = ehq;
+      if (alive(target) && pathTo(hq.x, hq.y, target.x, target.y)){
+        for (const u of r.slice(0, r.length - 1)){ u.post = 'atk'; u.atkB = target; guardAt(u, target.x, target.y, 60); }
+        ai.wave++;
+        if (E === 0) msg(`Enemy forces moving toward ${target.name}!`, '#ff8a6a');
+      }
+      ai.nextWave = time + 170 / CFG.aggr;
+    }
+  }
+  // engineers: one per site that needs work
+  const work = [];
+  for (const b of G.bld){
+    if (!alive(b)) continue;
+    if (b.kind === 'bp' && b.owner === T) work.push(b);
+    else if (isFac(b) && b.state === 'damaged' && (b.owner === T || objs.some(o => o.b === b) && b.capT === T)) work.push(b);
+    else if (b.kind === 'bridge' && b.state === 'damaged' && time > 300 && b.repStock > 0) work.push(b);
+  }
+  for (const u of eng) if (u.post && !work.some(b => b.id === u.post)){ u.post = null; guardAt(u, hq.x, hq.y, 50); }
+  for (const b of work){
+    if (eng.some(u => u.post === b.id)) continue;
+    const free = eng.filter(u => !u.post).sort((a, c) => D(a, b) - D(c, b));
+    if (free.length > (work.length > 2 ? 0 : 1)){ free[0].post = b.id; guardAt(free[0], b.x, b.y, 20); }
+  }
+  // recruitment
+  const wantInf = Math.min(16, 6 + Math.floor(time / 100) * 2);
+  if (eng.length < 3) recruit(T, 'eng');
+  else if (inf.length < wantInf && hq.inv.supplies >= 8) recruit(T, 'inf');
+
+  // logistics jobs, highest priority first
+  const jobs = [];
+  for (const b of [S.q, S.p, S.c, SE.c]) if (b.owner === T && b.state === 'damaged' && b.repStock < b.repNeed)
+    jobs.push({ key:'rep' + b.id, once:true, a:hq, b, res:'stone', amount:b.repNeed - b.repStock });
+  for (const b of G.bld) if (b.kind === 'bp' && b.owner === T && alive(b))
+    for (const k in b.need) if ((b.stock[k] || 0) < b.need[k]) jobs.push({ key:'bp' + b.id + k, once:true, a:hq, b, res:k, amount:b.need[k] - (b.stock[k] || 0) });
+  const cb = G.bridges[1];
+  if (cb.state === 'damaged' && time > 300 && cb.repStock < cb.repNeed) jobs.push({ key:'br', once:true, a:hq, b:cb, res:'stone', amount:cb.repNeed - cb.repStock });
+  for (const j of jobs) j.prio = 100;
+  // persistent routes, scored by how badly each leg is needed right now
+  if (okFac(S.q) && okFac(S.p)) jobs.push({ key:'qp', a:S.q, b:S.p, res:'stone', min:10, target:34, prio:20 + S.q.inv.stone - S.p.inv.stone });
+  if (okFac(S.p)) jobs.push({ key:'ph', a:S.p, b:hq, res:'concrete', min:6, target:110, prio:12 + S.p.inv.concrete * 2 - hq.inv.concrete / 5 });
+  if (okFac(S.q) && (!okFac(S.p) || hq.inv.stone < 12)) jobs.push({ key:'qh', a:S.q, b:hq, res:'stone', min:10, target:100, prio:okFac(S.p) ? 5 + S.q.inv.stone / 2 : 40 });
+  for (const c of [S.c, SE.c]) if (okFac(c) && !c.threat) jobs.push({ key:'ch' + c.id, a:c, b:hq, res:'stone', min:10, target:110, prio:c.inv.stone - hq.inv.stone / 3 });
+  jobs.sort((a, b) => b.prio - a.prio);
+  // the top N jobs get the N trucks; persistent routes outside the top N are pre-empted
+  const crewed = trucks.filter(t => t.driver && t.driver !== 'player');
+  const top = jobs.slice(0, crewed.length);
+  for (const t of crewed) if (t.route && !t.route.once && !top.some(j => j.key === t.route.key) && cargoN(t) === 0 && (t.rs === 'toA' || t.rs === 'load')) setRoute(t, null);
+  const idle = crewed.filter(t => !t.route);
+  for (const j of top){
+    if (trucks.some(t => t.route && t.route.key === j.key)) continue;
+    const t = idle.shift(); if (!t) break;
+    setRoute(t, { mode:'cargo', retreat:true, ...j });
+  }
+  if (trucks.length < 4 && jobs.length > trucks.length && hq.inv.concrete >= COST.truck.concrete + 2 && hq.inv.supplies >= COST.truck.supplies + 6 && pers(T) < CAP - 1) buyTruck(T);
+
+  // fortify: one concrete bunker at a time
+  const bunks = G.bld.filter(b => alive(b) && b.owner === T && (b.kind === 'bunker' || (b.kind === 'bp' && b.bk === 'bunker')));
+  if (bunks.length < 5 && hq.inv.concrete >= 10 && !G.bld.some(b => alive(b) && b.kind === 'bp' && b.owner === T)){
+    const sx = T ? 1 : -1; // toward the enemy
+    const sites = [];
+    if (okFac(S.c)) sites.push([S.c.x - sx * 120, S.c.y - sx * 70]);
+    if (okFac(SE.c)) sites.push([SE.c.x - sx * 110, SE.c.y + sx * 60]);
+    if (okFac(S.p)) sites.push([S.p.x - sx * 130, S.p.y + sx * 30]);
+    sites.push([hq.x - sx * 220, hq.y - 140]);
+    for (const [x, y] of sites){
+      if (bunks.some(b => Math.hypot(b.x - x, b.y - y) < 120)) continue;
+      if (placeBP(T, 'bunker', x, y)) break;
+    }
+  }
+}
+
+// ============================================================ main step
+function step(dt){
+  if (G.over || G.paused) return;
+  G.t += dt;
+  updPlayer(dt);
+  for (const t of G.trucks) if (alive(t)) updTruck(t, dt);
+  for (const u of G.units){
+    if (!alive(u) || u.type === 'player') continue;
+    if (u.type === 'crew') updCrew(u, dt);
+    else if (u.type === 'driver') updDriver(u, dt);
+    else updSoldier(u, dt);
+  }
+  // light separation
+  const us = G.units.filter(u => onMap(u) && !u.down && !(u.type === 'player' && u.inVeh));
+  for (let i = 0; i < us.length; i++) for (let j = i + 1; j < us.length; j++){
+    const a = us[i], b = us[j], dx = b.x - a.x, dy = b.y - a.y, rr = a.r + b.r;
+    if (Math.abs(dx) > rr || Math.abs(dy) > rr) continue;
+    const d = Math.hypot(dx, dy) || .01;
+    if (d < rr){
+      const push = (rr - d) * .5, px = dx / d * push, py = dy / d * push;
+      if (a.type !== 'player' && passable(a.x - px, a.y - py)){ a.x -= px; a.y -= py; }
+      if (b.type !== 'player' && passable(b.x + px, b.y + py)){ b.x += px; b.y += py; }
+    }
+  }
+  updBuildings(dt);
+  for (const f of G.F) factionTick(f, dt);
+  for (const ai of AIs) if (ai) aiTick(ai, dt);
+  for (const e of G.fx) e.t -= dt;
+  G.fx = G.fx.filter(e => e.t > 0);
+  G.units = G.units.filter(u => !u.dead && !u.gone);
+  G.trucks = G.trucks.filter(t => !t.dead);
+  G.bld = G.bld.filter(b => !b.dead);
+  if (G.sel && !alive(G.sel)) G.sel = null;
+}
+
+// ============================================================ rendering
+function drawWorld(){
+  const z = G.zoom, p = G.player;
+  const fx = p.inVeh ? p.inVeh : p;
+  G.cam.x += (fx.x - G.cam.x) * .15; G.cam.y += (fx.y - G.cam.y) * .15;
+  cx.setTransform(1, 0, 0, 1, 0, 0);
+  cx.fillStyle = '#1e241d'; cx.fillRect(0, 0, cw, ch);
+  cx.setTransform(z, 0, 0, z, cw / 2 - G.cam.x * z, ch / 2 - G.cam.y * z);
+  cx.fillStyle = '#39462f'; cx.fillRect(0, 0, W, H);
+  // grid
+  cx.strokeStyle = 'rgba(255,255,255,.035)'; cx.lineWidth = 1; cx.beginPath();
+  for (let x = 0; x <= W; x += 100){ cx.moveTo(x, 0); cx.lineTo(x, H); }
+  for (let y = 0; y <= H; y += 100){ cx.moveTo(0, y); cx.lineTo(W, y); }
+  cx.stroke();
+  // roads
+  cx.strokeStyle = '#575143'; cx.lineWidth = 22; cx.lineCap = 'round';
+  cx.beginPath(); for (const r of G.roads){ cx.moveTo(r[0], r[1]); cx.lineTo(r[2], r[3]); } cx.stroke();
+  cx.strokeStyle = 'rgba(220,210,170,.18)'; cx.lineWidth = 1.5; cx.setLineDash([14, 14]);
+  cx.beginPath(); for (const r of G.roads){ cx.moveTo(r[0], r[1]); cx.lineTo(r[2], r[3]); } cx.stroke(); cx.setLineDash([]);
+  // decor
+  for (const d of G.decor){
+    if (d.k === 'tree'){ cx.fillStyle = '#2c3a25'; cx.beginPath(); cx.arc(d.x, d.y, d.s * .8, 0, 7); cx.fill(); }
+    else if (d.k === 'crater'){ cx.fillStyle = 'rgba(30,26,20,.45)'; cx.beginPath(); cx.arc(d.x, d.y, d.s * .6, 0, 7); cx.fill(); }
+    else { cx.save(); cx.translate(d.x, d.y); cx.rotate(d.a); cx.fillStyle = '#4a4a44'; cx.fillRect(-d.s * .7, -d.s * .5, d.s * 1.4, d.s); cx.fillStyle = '#3a3a35'; cx.fillRect(-d.s * .3, -d.s * .5, d.s * .5, d.s * .6); cx.restore(); }
+  }
+  // river
+  cx.fillStyle = '#25597d'; cx.fillRect(RL, 0, RR - RL, H);
+  cx.strokeStyle = '#3b7aa3'; cx.lineWidth = 3; cx.beginPath(); cx.moveTo(RL, 0); cx.lineTo(RL, H); cx.moveTo(RR, 0); cx.lineTo(RR, H); cx.stroke();
+  cx.strokeStyle = 'rgba(180,220,255,.15)'; cx.lineWidth = 2;
+  for (let y = (G.t * 25) % 60 - 60; y < H; y += 60){ cx.beginPath(); cx.moveTo(RL + 18, y); cx.lineTo(RL + 30, y + 14); cx.moveTo(RR - 28, y + 30); cx.lineTo(RR - 18, y + 44); cx.stroke(); }
+  // own route lines
+  for (const t of G.trucks){
+    if (t.team !== 0 || !t.route || t.route.mode !== 'cargo') continue;
+    const r = t.route;
+    cx.strokeStyle = 'rgba(127,220,106,.35)'; cx.lineWidth = 3; cx.setLineDash([10, 10]); cx.lineDashOffset = -G.t * 30;
+    cx.beginPath(); cx.moveTo(r.a.x, r.a.y);
+    const pth = pathTo(r.a.x, r.a.y, r.b.x, r.b.y) || [];
+    for (const q of pth) cx.lineTo(q.x, q.y);
+    cx.stroke(); cx.setLineDash([]);
+  }
+  if (G.draft){ const d = G.draft; cx.strokeStyle = '#bfe0ff'; cx.lineWidth = 2; cx.setLineDash([6, 6]); cx.beginPath(); cx.moveTo(d.a.x, d.a.y); const e = d.b || d.truck; cx.lineTo(e.x, e.y); cx.stroke(); cx.setLineDash([]); }
+  for (const b of G.bld) drawB(b);
+  for (const t of G.trucks) drawT(t);
+  for (const u of G.units) if (onMap(u) && !(u.type === 'player' && (u.inVeh || u.down))) drawU(u);
+  // fx
+  for (const e of G.fx){
+    if (e.k === 'tr'){ cx.strokeStyle = e.c; cx.globalAlpha = Math.min(1, e.t * 12); cx.lineWidth = 1.5; cx.beginPath(); cx.moveTo(e.x1, e.y1); cx.lineTo(e.x2, e.y2); cx.stroke(); cx.globalAlpha = 1; }
+    else if (e.k === 'boom'){ const k = 1 - e.t / e.m; cx.fillStyle = e.c; cx.globalAlpha = 1 - k; cx.beginPath(); cx.arc(e.x, e.y, e.r * (.4 + k), 0, 7); cx.fill(); cx.globalAlpha = 1; }
+    else if (e.k === 'ring'){ const k = 1 - e.t / e.m; cx.strokeStyle = e.c; cx.globalAlpha = 1 - k; cx.lineWidth = 2; cx.beginPath(); cx.arc(e.x, e.y, e.r * k, 0, 7); cx.stroke(); cx.globalAlpha = 1; }
+    else if (e.k === 'txt'){ const k = 1 - e.t / e.m; cx.fillStyle = e.c; cx.globalAlpha = 1 - k; cx.font = 'bold 12px monospace'; cx.textAlign = 'center'; cx.fillText(e.s, e.x, e.y - 10 - k * 24); cx.globalAlpha = 1; }
+  }
+  // build ghost
+  if (G.build && !p.inVeh){
+    const r = BDEF[G.build].r, ok = canPlace(G.mx, G.my, r, 0);
+    cx.strokeStyle = ok ? '#7fdc6a' : '#ff5a4a'; cx.lineWidth = 2; cx.setLineDash([5, 5]);
+    cx.strokeRect(G.mx - r, G.my - r, r * 2, r * 2); cx.setLineDash([]);
+    label(`${BPDEF[G.build].name} — ${Object.entries(BPDEF[G.build].need).map(([k, v]) => v + ' ' + RESN[k]).join(', ')}`, G.mx, G.my - r - 8, ok ? '#7fdc6a' : '#ff5a4a');
+  }
+  // aim
+  if (!p.inVeh && !p.down){
+    cx.strokeStyle = 'rgba(255,255,255,.12)'; cx.lineWidth = 1; cx.beginPath(); cx.moveTo(p.x, p.y);
+    const a = Math.atan2(G.my - p.y, G.mx - p.x); cx.lineTo(p.x + Math.cos(a) * ST.player.range, p.y + Math.sin(a) * ST.player.range); cx.stroke();
+  }
+}
+function label(s, x, y, c = '#dfe6dc', size = 12){
+  cx.font = `${size}px monospace`; cx.textAlign = 'center';
+  cx.fillStyle = 'rgba(0,0,0,.6)'; const w = cx.measureText(s).width;
+  cx.fillRect(x - w / 2 - 3, y - size + 1, w + 6, size + 3);
+  cx.fillStyle = c; cx.fillText(s, x, y);
+}
+function bar(x, y, w, v, c){ cx.fillStyle = 'rgba(0,0,0,.6)'; cx.fillRect(x - w / 2, y, w, 4); cx.fillStyle = c; cx.fillRect(x - w / 2, y, w * clamp(v, 0, 1), 4); }
+function drawB(b){
+  const oc = b.owner < 0 ? NEU : TEAMC[b.owner], r = b.r;
+  cx.save();
+  switch (b.kind){
+    case 'city':
+      cx.fillStyle = 'rgba(255,255,255,.05)'; cx.beginPath(); cx.arc(b.x, b.y, r, 0, 7); cx.fill();
+      cx.strokeStyle = oc; cx.setLineDash([8, 6]); cx.lineWidth = 2; cx.stroke(); cx.setLineDash([]);
+      for (let i = 0; i < 9; i++){ const a = i * .7, rr = 20 + (i % 3) * 18; cx.fillStyle = i % 2 ? '#8a8172' : '#9d9483'; cx.fillRect(b.x + Math.cos(a) * rr - 9, b.y + Math.sin(a) * rr - 8, 18, 16); cx.fillStyle = '#6b3d33'; cx.fillRect(b.x + Math.cos(a) * rr - 9, b.y + Math.sin(a) * rr - 8, 18, 5); }
+      break;
+    case 'hq':
+      cx.fillStyle = '#3c444e'; cx.fillRect(b.x - r, b.y - r, r * 2, r * 2);
+      cx.strokeStyle = oc; cx.lineWidth = 4; cx.strokeRect(b.x - r, b.y - r, r * 2, r * 2);
+      cx.fillStyle = '#2b3138'; cx.fillRect(b.x - r * .5, b.y - r * .5, r, r);
+      cx.fillStyle = oc; cx.beginPath(); cx.moveTo(b.x - 4, b.y - 30); cx.lineTo(b.x - 4, b.y + 14); cx.lineTo(b.x - 1, b.y + 14); cx.lineTo(b.x - 1, b.y - 30); cx.fill();
+      cx.fillRect(b.x - 1, b.y - 30, 24, 14);
+      break;
+    case 'quarry':
+      cx.fillStyle = '#6b5a40'; cx.fillRect(b.x - r, b.y - r, r * 2, r * 2);
+      for (let i = 3; i > 0; i--){ cx.fillStyle = ['#4a3e2c', '#56482f', '#625239'][i - 1]; cx.beginPath(); cx.ellipse(b.x, b.y, r * i * .28, r * i * .22, 0, 0, 7); cx.fill(); }
+      break;
+    case 'plant':
+      cx.fillStyle = '#56595f'; cx.fillRect(b.x - r, b.y - r * .7, r * 2, r * 1.4);
+      cx.fillStyle = '#6c7078'; cx.beginPath(); cx.arc(b.x - r * .4, b.y, r * .35, 0, 7); cx.fill();
+      cx.fillStyle = '#44474c'; cx.fillRect(b.x + r * .3, b.y - r * 1.05, 12, r * .9);
+      if (b.active){ for (let i = 0; i < 3; i++){ const k = (G.t * .6 + i / 3) % 1; cx.fillStyle = `rgba(200,200,200,${.35 * (1 - k)})`; cx.beginPath(); cx.arc(b.x + r * .3 + 6 + k * 14, b.y - r * 1.05 - k * 40, 6 + k * 10, 0, 7); cx.fill(); } }
+      break;
+    case 'depot':
+      cx.fillStyle = '#5c5236'; cx.fillRect(b.x - r, b.y - r, r * 2, r * 2);
+      cx.strokeStyle = '#7a6d48'; cx.lineWidth = 2; for (let i = -1; i <= 1; i++){ cx.strokeRect(b.x + i * 22 - 9, b.y - 9, 18, 18); }
+      break;
+    case 'bunker': {
+      cx.fillStyle = '#7d7f82'; cx.beginPath();
+      for (let i = 0; i < 8; i++){ const a = i * Math.PI / 4 + Math.PI / 8; cx.lineTo(b.x + Math.cos(a) * r, b.y + Math.sin(a) * r); }
+      cx.closePath(); cx.fill(); cx.fillStyle = '#4a4c4f'; cx.fillRect(b.x - r * .6, b.y - 3, r * 1.2, 6);
+      for (let i = 0; i < 4; i++){ cx.fillStyle = i < b.gar.length ? oc : 'rgba(0,0,0,.4)'; cx.fillRect(b.x - 14 + i * 8, b.y + 8, 6, 6); }
+      break;
+    }
+    case 'bridge': {
+      const y = b.y;
+      cx.fillStyle = b.state === 'ok' ? '#7a6447' : '#4f4232';
+      cx.fillRect(RL - 22, y - 40, RR - RL + 44, 80);
+      cx.strokeStyle = '#5b4a33'; cx.lineWidth = 2; for (let x = RL - 18; x < RR + 22; x += 12){ cx.beginPath(); cx.moveTo(x, y - 40); cx.lineTo(x, y + 40); cx.stroke(); }
+      if (b.state !== 'ok'){ cx.fillStyle = '#25597d'; cx.fillRect(RL + 15, y - 41, RR - RL - 30, 82); cx.strokeStyle = '#ff5a4a'; cx.lineWidth = 3; cx.beginPath(); cx.moveTo(RL + 12, y - 25); cx.lineTo(RR - 12, y + 25); cx.moveTo(RR - 12, y - 25); cx.lineTo(RL + 12, y + 25); cx.stroke(); }
+      break;
+    }
+    case 'bp': {
+      cx.strokeStyle = oc; cx.lineWidth = 2; cx.setLineDash([6, 4]); cx.strokeRect(b.x - r, b.y - r, r * 2, r * 2); cx.setLineDash([]);
+      cx.fillStyle = 'rgba(255,255,255,.12)'; cx.fillRect(b.x - r, b.y + r - r * 2 * (b.prog / b.pts), r * 2, r * 2 * (b.prog / b.pts));
+      break;
+    }
+  }
+  cx.restore();
+  // ring + capture
+  if (b.kind !== 'bridge' && b.kind !== 'city' && b.kind !== 'bp'){
+    if (b.capT >= 0 && b.cap > 0){
+      const need = b.owner < 0 ? 6 : 10;
+      cx.strokeStyle = TEAMC[b.capT]; cx.lineWidth = 5; cx.beginPath(); cx.arc(b.x, b.y, r + 12, -Math.PI / 2, -Math.PI / 2 + 6.283 * b.cap / need); cx.stroke();
+    }
+    if (isFac(b) || b.kind === 'depot'){ cx.strokeStyle = b.contested ? '#ffcf4a' : oc; cx.globalAlpha = .45; cx.lineWidth = 1.5; cx.setLineDash([4, 6]); cx.beginPath(); cx.arc(b.x, b.y, r + 70, 0, 7); cx.stroke(); cx.setLineDash([]); cx.globalAlpha = 1; }
+  }
+  // labels
+  const ly = b.kind === 'bridge' ? b.y - 48 : b.y - r - 8;
+  label(b.name, b.x, ly, b.owner < 0 ? '#cfcfcf' : oc);
+  let sub = '';
+  if (b.kind === 'bridge') sub = b.state === 'ok' ? '' : `DESTROYED — repair: ${b.repStock}/${b.repNeed} stone`;
+  else if (b.kind === 'city'){ const f = G.F[b.owner]; sub = f.withdrawn ? 'SUPPORT WITHDRAWN' : `Protected city · workers ${f.pop} · ${f.status}`; }
+  else if (isFac(b) && b.state === 'damaged') sub = `DAMAGED · repair ${b.repStock}/${b.repNeed} stone`;
+  else if (b.kind === 'quarry') sub = `stone ${b.inv.stone}/40 · crew ${b.workers}/${CFG.crew}`;
+  else if (b.kind === 'plant') sub = `in ${b.inv.stone} stone → out ${b.inv.concrete} concrete · crew ${b.workers}/${CFG.crew}`;
+  else if (b.kind === 'hq' || b.kind === 'depot') sub = `St ${b.inv.stone} · Co ${b.inv.concrete} · Su ${b.inv.supplies}`;
+  else if (b.kind === 'bp') sub = Object.keys(b.need).map(k => `${RESN[k]} ${b.stock[k] || 0}/${b.need[k]}`).join(' ') + ` · ${Math.floor(100 * b.prog / b.pts)}%`;
+  else if (b.kind === 'bunker') sub = `garrison ${b.gar.length}/4`;
+  if (sub){
+    const bad = sub.startsWith('DAMAGED') || sub.startsWith('DESTROYED') || sub.startsWith('SUPPORT');
+    label(sub, b.x, b.kind === 'bridge' ? b.y + 58 : b.y + r + 16, bad ? '#ff9a7a' : '#c8d0c4', 11);
+  }
+  if (b.maxHp && b.hp < b.maxHp) bar(b.x, b.y + r + 20, r * 2, b.hp / b.maxHp, '#7fdc6a');
+  if (isFac(b) && b.state === 'damaged' && b.repProg > 0) bar(b.x, b.y + r + 20, r * 2, b.repProg / b.repNeed, '#ffcf4a');
+  if (b.kind === 'bridge' && b.state === 'damaged' && b.repProg > 0) bar(b.x, b.y + 64, 80, b.repProg / b.repNeed, '#ffcf4a');
+  if (G.sel === b){ cx.strokeStyle = '#fff'; cx.lineWidth = 1.5; cx.strokeRect(b.x - r - 6, b.y - r - 6, r * 2 + 12, r * 2 + 12); }
+}
+function drawT(t){
+  cx.save(); cx.translate(t.x, t.y); cx.rotate(t.a);
+  cx.fillStyle = 'rgba(0,0,0,.35)'; cx.fillRect(-17, -8, 38, 20);
+  cx.fillStyle = t.team ? '#a8433a' : '#3a6fa8'; cx.fillRect(-19, -10, 38, 20);
+  cx.fillStyle = t.team ? '#7d2c25' : '#28507d'; cx.fillRect(9, -9, 10, 18);
+  cx.fillStyle = '#9fc8e8'; cx.fillRect(15, -7, 3, 14);
+  // cargo blocks
+  let i = 0;
+  for (const r of RES){ for (let k = 0; k < Math.ceil(t.cargo[r] / 4); k++, i++){ const cx2 = -17 + (i % 5) * 5, cy2 = -8 + Math.floor(i / 5) * 4; cx.fillStyle = RESC[r]; cx.fillRect(cx2, cy2, 4, 3); } }
+  cx.restore();
+  if (t.pax.length) label(`👥${t.pax.length}`, t.x, t.y - 16, '#fff', 10);
+  if (t.hp < t.maxHp) bar(t.x, t.y + 16, 36, t.hp / t.maxHp, '#7fdc6a');
+  if (G.sel === t || G.player.inVeh === t){ cx.strokeStyle = '#fff'; cx.lineWidth = 1.2; cx.beginPath(); cx.arc(t.x, t.y, 26, 0, 7); cx.stroke(); }
+  if (t.team === 0 && G.zoom > .55) label(tName(t) + (t.driver && t.driver !== 'player' ? ' ⚙' : ''), t.x, t.y + 32, '#bfe0ff', 10);
+}
+function drawU(u){
+  const c = TEAMC[u.team];
+  cx.beginPath(); cx.arc(u.x, u.y, u.r, 0, 7);
+  if (u.type === 'crew'){ cx.fillStyle = '#e8d27a'; cx.fill(); cx.strokeStyle = c; cx.lineWidth = 2; cx.stroke(); }
+  else if (u.type === 'driver'){ cx.fillStyle = '#b8b8b8'; cx.fill(); cx.strokeStyle = c; cx.lineWidth = 2; cx.stroke(); }
+  else if (u.type === 'player'){
+    cx.fillStyle = c; cx.fill(); cx.strokeStyle = '#fff'; cx.lineWidth = 2.5; cx.stroke();
+    const a = Math.atan2(G.my - u.y, G.mx - u.x); cx.strokeStyle = '#222'; cx.lineWidth = 3; cx.beginPath(); cx.moveTo(u.x, u.y); cx.lineTo(u.x + Math.cos(a) * 15, u.y + Math.sin(a) * 15); cx.stroke();
+  } else {
+    cx.fillStyle = c; cx.fill(); cx.strokeStyle = 'rgba(0,0,0,.6)'; cx.lineWidth = 1; cx.stroke();
+    cx.fillStyle = '#fff'; cx.font = 'bold 8px monospace'; cx.textAlign = 'center'; cx.fillText(u.type === 'inf' ? 'I' : 'E', u.x, u.y + 3);
+    if (u.mode === 'follow'){ cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(u.x, u.y - u.r - 3, 1.8, 0, 7); cx.fill(); }
+    if (u.workFx && G.t - u.workFx < .2 && Math.random() < .3) G.fx.push({ k:'boom', x:u.x + rnd(-6, 6), y:u.y + rnd(-6, 6), t:.15, m:.15, r:3, c:'#ffcf4a' });
+  }
+  if (u.type === 'crew' && u.st === 'flee'){ cx.fillStyle = '#ff5a4a'; cx.font = 'bold 10px monospace'; cx.fillText('!', u.x, u.y - 8); }
+  if (u.hp < u.maxHp) bar(u.x, u.y - u.r - 7, 16, u.hp / u.maxHp, u.hp / u.maxHp > .5 ? '#7fdc6a' : '#ff5a4a');
+}
+function drawMini(){
+  const s = mini.width / W;
+  mx.fillStyle = '#39462f'; mx.fillRect(0, 0, mini.width, mini.height);
+  mx.fillStyle = '#25597d'; mx.fillRect(RL * s, 0, (RR - RL) * s + 1, mini.height);
+  for (const b of G.bld){
+    if (b.kind === 'bridge'){ mx.fillStyle = b.state === 'ok' ? '#a08560' : '#ff5a4a'; mx.fillRect((RL - 20) * s, (b.y - 30) * s, (RR - RL + 40) * s, 60 * s); continue; }
+    mx.fillStyle = b.owner < 0 ? NEU : TEAMC[b.owner];
+    const r = Math.max(2.5, b.r * s);
+    if (b.kind === 'city'){ mx.globalAlpha = .4; mx.beginPath(); mx.arc(b.x * s, b.y * s, r, 0, 7); mx.fill(); mx.globalAlpha = 1; }
+    else mx.fillRect(b.x * s - r, b.y * s - r, r * 2, r * 2);
+    if (isFac(b) && b.state === 'damaged'){ mx.strokeStyle = '#ffcf4a'; mx.strokeRect(b.x * s - r, b.y * s - r, r * 2, r * 2); }
+  }
+  for (const u of G.units){ if (!onMap(u) || u.down) continue; mx.fillStyle = u.type === 'crew' ? '#e8d27a' : u.type === 'player' ? '#fff' : TEAMC[u.team]; mx.fillRect(u.x * s - 1, u.y * s - 1, u.type === 'player' ? 3 : 2, u.type === 'player' ? 3 : 2); }
+  for (const t of G.trucks){ mx.fillStyle = '#fff'; mx.fillRect(t.x * s - 2, t.y * s - 2, 4, 4); mx.fillStyle = TEAMC[t.team]; mx.fillRect(t.x * s - 1, t.y * s - 1, 2, 2); }
+  const vw = cw / G.zoom * s, vh = ch / G.zoom * s;
+  mx.strokeStyle = 'rgba(255,255,255,.6)'; mx.lineWidth = 1; mx.strokeRect(G.cam.x * s - vw / 2, G.cam.y * s - vh / 2, vw, vh);
+}
+
+// ============================================================ UI panels
+const btn = (act, txt, dis, on) => `<button data-act="${act}"${dis ? ' disabled' : ''}${on ? ' class="on"' : ''}>${txt}</button>`;
+function meter(v, c){ return `<div class="meter"><i style="width:${clamp(v, 0, 100)}%;background:${c}"></i></div>`; }
+function facHTML(team){
+  const f = G.F[team], hq = f.hq, c = team ? '#ff5a4a' : '#4aa3ff';
+  const conf = Math.round(f.conf), stc = f.status === 'Stable' ? 'good' : f.status === 'Warning' ? 'warn' : 'bad';
+  const trucks = G.trucks.filter(t => t.team === team).length;
+  return `<div class="fac"><div class="row"><span class="name" style="color:${c}">${team ? 'RED FACTION (AI)' : 'BLUE FACTION (YOU)'}</span>
+    <span>${f.city.name}: <b class="${stc}">${f.status}${f.collapse != null ? ' · collapse ' + fmt(f.collapse) : ''}</b></span></div>
+    <div class="row"><span>Confidence ${conf}%</span><span>Casualties <b class="${f.cas / CFG.cas >= .4 ? 'bad' : ''}">${f.cas}/${CFG.cas}</b></span><span>Workers home ${f.pop}</span></div>
+    ${meter(conf, conf > 60 ? '#7fdc6a' : conf > 30 ? '#ffcf4a' : '#ff5a4a')}
+    <div class="row dim"><span>HQ: St ${alive(hq) ? hq.inv.stone : 0} · Co ${alive(hq) ? hq.inv.concrete : 0} · Su ${alive(hq) ? hq.inv.supplies : 0}</span><span>Pers ${pers(team)}/${CAP} · Trucks ${trucks}</span></div></div>`;
+}
+function ownerName(o){ return o < 0 ? 'Unclaimed' : o === 0 ? '<span class="blue">Blue (you)</span>' : '<span class="bad">Red (enemy)</span>'; }
+function invRows(b){ return RES.filter(r => capOf(b, r) > 0).map(r => `<div class="row"><span style="color:${RESC[r]}">${RESN[r]}</span><span>${b.inv[r]}/${capOf(b, r)}</span></div>`).join(''); }
+function bldHTML(b){
+  let h = `<h3>${b.name}</h3><div class="sub">${ownerName(b.owner)} · ${({ city:'City hub', hq:'Headquarters', quarry:'Quarry', plant:'Concrete plant', depot:'Forward depot', bunker:'Concrete bunker', bridge:'Bridge', bp:'Construction site' })[b.kind]}</div>`;
+  if (b.maxHp) h += `<div class="row"><span>Integrity</span><span>${Math.ceil(b.hp)}/${b.maxHp}</span></div>${meter(100 * b.hp / b.maxHp, '#7fdc6a')}`;
+  if (b.kind === 'city'){
+    const f = G.F[b.owner];
+    h += `<div>Status: <b>${f.status}</b>${f.collapse != null ? ` — faction collapses in <b class="bad">${fmt(f.collapse)}</b>` : ''}</div>
+      <div>Workers available: ${f.pop} · casualties ${f.cas}/${CFG.cas}</div>
+      <div class="dim sec">The city cannot be attacked. It sends crews to staffed sites. Workers killed on the job erode confidence; at 40% of the threshold it warns, at 70% it restricts recruitment, at 100% it withdraws for good.</div>`;
+  }
+  if (isFac(b)){
+    if (b.state === 'damaged'){
+      h += `<div class="sec warn">DAMAGED — needs repair</div><div class="row"><span>Repair stone on site</span><span>${b.repStock}/${b.repNeed}</span></div>
+        <div class="row"><span>Repair progress</span><span>${Math.floor(100 * b.repProg / b.repNeed)}%</span></div>
+        <div class="dim">${b.owner !== 0 ? 'Secure it with troops first. ' : ''}Bring stone by truck, then post engineers here (F to call, G to send).</div>`;
+    } else {
+      const as = crewAssigned(b);
+      h += `<div class="sec row"><span>Crew working</span><span>${b.workers}/${CFG.crew} <span class="dim">(${as} assigned)</span></span></div>`;
+      const why = b.owner < 0 ? 'Unclaimed — secure it with troops' : b.threat ? 'Threatened — crews flee' : !b.workers ? 'Waiting for civilian crew' :
+        b.kind === 'quarry' ? (b.inv.stone >= 40 ? 'Output full — haul it away' : 'Quarrying stone') :
+        (b.inv.stone < 2 ? 'Needs stone input' : b.inv.concrete >= 30 ? 'Output full — haul it away' : 'Producing concrete (2 stone → 1)');
+      h += `<div class="${b.active ? 'good' : 'warn'}">${why}</div>` + invRows(b);
+    }
+  }
+  if (b.kind === 'hq' || b.kind === 'depot') h += '<div class="sec"></div>' + invRows(b);
+  if (b.kind === 'depot' && b.owner === 0) h += btn('recDepot', 'Recruit infantry here (4 supplies from this depot)');
+  if (b.kind === 'bunker') h += `<div>Garrison ${b.gar.length}/4 — post infantry here (G) to man it.</div>`;
+  if (b.kind === 'bridge') h += b.state === 'ok' ? '<div class="good">Open to traffic</div>' : `<div class="warn">Destroyed. Deliver ${b.repNeed} stone (${b.repStock} so far) and post engineers.</div><div>Progress ${Math.floor(100 * b.repProg / b.repNeed)}%</div>`;
+  if (b.kind === 'bp'){
+    h += Object.keys(b.need).map(k => `<div class="row"><span style="color:${RESC[k]}">${RESN[k]} delivered</span><span>${b.stock[k] || 0}/${b.need[k]}</span></div>`).join('');
+    h += `<div class="row"><span>Construction</span><span>${Math.floor(100 * b.prog / b.pts)}%</span></div><div class="dim">Truck the materials here; engineers build only with what's on site.</div>`;
+    if (b.owner === 0) h += btn('cancelBP', 'Cancel blueprint (materials lost)');
+  }
+  if ((isFac(b) || b.kind === 'depot') && b.capT >= 0 && b.cap > 0) h += `<div class="sec">Being captured by ${b.capT ? 'Red' : 'Blue'}: ${Math.floor(100 * b.cap / (b.owner < 0 ? 6 : 10))}%</div>`;
+  if (b.contested) h += '<div class="warn">Contested!</div>';
+  return h;
+}
+function truckHTML(t, driving){
+  let h = `<h3>Truck ${tName(t)}</h3><div class="sub">${t.team ? '<span class="bad">Enemy</span>' : 'Blue'} · ${driving ? 'you are driving' : t.driver ? 'NPC driver' : 'no driver'}</div>`;
+  h += `<div class="row"><span>Integrity</span><span>${Math.ceil(t.hp)}/${t.maxHp}</span></div>${meter(100 * t.hp / t.maxHp, '#7fdc6a')}`;
+  h += `<div class="dim">${t.status}</div>`;
+  h += `<div class="sec row"><span>Cargo</span><span>${cargoN(t)}/${t.cap}</span></div>` + RES.map(r => t.cargo[r] ? `<div class="row"><span style="color:${RESC[r]}">${RESN[r]}</span><span>${t.cargo[r]}</span></div>` : '').join('');
+  const cnt = ty => t.pax.filter(u => u.type === ty).length;
+  h += `<div class="row"><span>Passengers ${t.pax.length}/${t.paxCap}</span><span class="dim">inf ${cnt('inf')} · eng ${cnt('eng')} · crew ${cnt('crew')}</span></div>`;
+  if (t.team !== 0) return h;
+  if (driving){
+    const b = atBld(t);
+    if (b){
+      h += `<div class="sec">Parked at <b>${b.name}</b></div>`;
+      for (const r of RES){
+        const a = avail(b, r, 0), rm = room(b, r, 0);
+        if (!a && !rm && !t.cargo[r]) continue;
+        h += `<div class="row"><span style="color:${RESC[r]}">${RESN[r]} <span class="dim">(site ${stockAt(b, r)})</span></span><span>
+          ${btn('load:' + r, 'Load 5', !a || cargoN(t) >= t.cap)}${btn('unl:' + r, 'Unload 5', !t.cargo[r] || !rm)}</span></div>`;
+      }
+    } else h += '<div class="sec dim">Park beside a site to load/unload (keys 1-3 / Shift+1-3).</div>';
+    h += `<div class="sec">${btn('board', 'Board troops (F)')}${btn('unpax', 'Unload passengers (G)', !t.pax.length)}</div>`;
+  }
+  h += '<div class="sec"><b>Route</b> ';
+  const r = t.route;
+  if (r && r.mode === 'cargo') h += `<div>${RESN[r.res]}: ${r.a.name} → ${r.b.name}</div><div class="dim">min load ${r.min} · stop at dest stock ${r.target >= 9999 ? '∞' : r.target} · ${r.retreat ? 'retreat when threatened' : 'ignore threats'}</div>`;
+  else if (r && r.mode === 'shuttle') h += `<div>Civilian shuttle: ${G.F[0].city.name} ⇄ your staffed sites</div>`;
+  else h += '<span class="dim">none</span>';
+  if (r) h += '<div>' + btn('rClear', 'Clear route') + '</div>';
+  const d = G.draft;
+  if (driving){
+    if (d && d.truck === t){
+      h += `<div class="sec"><b>New route</b>: ${d.a.name} → ${d.b ? d.b.name : '<i>drive to destination, press R</i>'}</div>`;
+      if (d.b){
+        h += '<div>Cargo: ' + RES.map(x => btn('rRes:' + x, RESN[x], false, d.res === x)).join('') + '</div>';
+        h += `<div>${btn('rMin', 'Min load: ' + d.min)}${btn('rTgt', 'Dest target: ' + (d.target >= 9999 ? '∞' : d.target))}${btn('rRet', d.retreat ? 'Retreat if threatened' : 'Ignore threats')}</div>`;
+        h += btn('rSave', 'Save route (R)');
+      }
+      h += btn('rCancel', 'Cancel');
+    } else h += `<div>${btn('rStart', 'Start route here (R)', !atBld(t))}${btn('shuttle', 'Make civilian shuttle')}</div>`;
+  } else {
+    if (t.driver && t.driver !== 'player') h += '<div class="sec">' + btn('release', 'Release driver') + '</div>';
+    else if (alive(t.hired)) h += '<div class="sec dim">Driver walking over…</div>';
+    else h += `<div class="sec">${btn('hire', 'Hire driver (3 supplies, 1 personnel)')}<div class="dim">${t.route ? 'The driver will run the route.' : 'Set a route first (drive it, press R at each end).'}</div></div>`;
+    if (!r) h += btn('shuttle', 'Make civilian shuttle');
+  }
+  return h + '</div>';
+}
+function ctxHTML(){
+  const p = G.player;
+  if (p.inVeh) return truckHTML(p.inVeh, true);
+  let e = G.sel && alive(G.sel) ? G.sel : null;
+  if (!e){
+    e = nearestBld(p, 120);
+    const t = nearestTruck(p, 80, 0);
+    if (t && (!e || D(t, p) < D(e, p) - e.r)) e = t;
+  }
+  if (!e) return `<h3>In the field</h3><div class="dim">Walk up to a site or truck, or right-click one, to inspect it.<br><br>
+    Followers: ${followers().length} · <kbd>G</kbd> sends: ${G.filter === 'all' ? 'everyone' : TYPEN[G.filter]}</div>`;
+  return e.isT ? truckHTML(e, false) : bldHTML(e);
+}
+function cmdHTML(){
+  const hq = G.F[0].hq, fl = followers();
+  let h = `<h3>Command</h3><div class="row"><span>Personnel</span><span>${pers(0)}/${CAP}</span></div>`;
+  h += `<div>${btn('rec:inf', 'Infantry 4Su')}${btn('rec:eng', 'Engineer 5Su')}${btn('buyTruck', 'Truck 8Co+8Su')}</div>`;
+  h += `<div class="sec">Blueprint: ${btn('build:depot', 'Depot 15St', false, G.build === 'depot')}${btn('build:bunker', 'Bunker 10Co', false, G.build === 'bunker')}</div>`;
+  h += `<div class="sec">Following you: ${fl.filter(u => u.type === 'inf').length} inf · ${fl.filter(u => u.type === 'eng').length} eng<br>G sends: ${['all', 'inf', 'eng'].map(f => btn('filter:' + f, f === 'all' ? 'All' : TYPEN[f], false, G.filter === f)).join('')}</div>`;
+  const ts = G.trucks.filter(t => t.team === 0);
+  h += '<div class="sec"><b>Fleet</b>' + ts.map(t => `<div class="row"><span>${btn('selT:' + t.id, tName(t))}</span><span class="dim" style="text-align:right;flex:1">${t.status}</span></div>`).join('') + '</div>';
+  return h;
+}
+function helpHTML(){
+  const p = G.player;
+  if (p.down) return `<b>Commander down</b> — redeploying in ${Math.ceil(p.respawn)}s`;
+  if (p.inVeh) return '<b>WASD</b> drive · <b>E</b> exit · <b>F</b> board troops · <b>G</b> unload passengers · <b>1/2/3</b> load · <b>Shift+1/2/3</b> unload · <b>R</b> route start/end · stop at your city or sites to swap civilian crews';
+  if (G.build) return `Placing <b>${BPDEF[G.build].name}</b> — <b>LMB</b> place · <b>B</b> next · <b>Esc</b> cancel`;
+  return '<b>WASD</b> move · <b>LMB</b> fire · <b>E</b> enter truck · <b>F</b> call troops · <b>G</b> send to cursor · <b>Q</b> filter · <b>B</b> blueprint · <b>RMB</b> inspect · <b>P</b> pause · <b>[ ]</b> speed';
+}
+function uiRefresh(){
+  $('top').innerHTML = facHTML(0) + `<div class="clock"><b>${fmt(G.t)}</b><br>${G.paused ? 'PAUSED' : '×' + G.speed}</div>` + facHTML(1);
+  $('ctx').innerHTML = ctxHTML();
+  $('cmd').innerHTML = cmdHTML();
+  $('help').innerHTML = helpHTML();
+  $('log').innerHTML = G.msgs.filter(m => G.t - m.t < 25).slice(-8).map(m => `<div style="color:${m.c}">${m.s}</div>`).join('');
+  const bn = $('banner'), f0 = G.F[0], f1 = G.F[1];
+  if (f0.collapse != null){ bn.style.display = 'block'; bn.style.background = 'rgba(120,20,20,.9)'; bn.innerHTML = `${f0.city.name} has withdrawn support — faction collapse in ${fmt(f0.collapse)}<br><span style="font-size:12px">Destroy the Red HQ before time runs out!</span>`; }
+  else if (f1.collapse != null){ bn.style.display = 'block'; bn.style.background = 'rgba(20,90,30,.9)'; bn.innerHTML = `Red faction is collapsing in ${fmt(f1.collapse)}`; }
+  else if (f0.status === 'Restricted'){ bn.style.display = 'block'; bn.style.background = 'rgba(120,90,10,.9)'; bn.innerHTML = `${f0.city.name} restricts recruitment — protect your workers!`; }
+  else bn.style.display = 'none';
+}
+function doAct(a){
+  const p = G.player, t = p.inVeh;
+  const [k, v] = a.split(':');
+  const target = t || (G.sel && G.sel.isT ? G.sel : null) || nearestTruck(p, 80, 0);
+  switch (k){
+    case 'rec': recruit(0, v); break;
+    case 'buyTruck': buyTruck(0); break;
+    case 'build': G.build = G.build === v ? null : v; break;
+    case 'filter': G.filter = v; break;
+    case 'selT': { const tt = G.trucks.find(x => x.id === +v); if (tt) G.sel = tt; break; }
+    case 'load': if (t) truckLoad(t, v, 5); break;
+    case 'unl': if (t) truckUnload(t, v, 5); break;
+    case 'board': if (t) cmdBoard(t); break;
+    case 'unpax': if (t) cmdUnloadPax(t); break;
+    case 'rStart': routeKey(); break;
+    case 'rRes': if (G.draft) G.draft.res = v; break;
+    case 'rMin': if (G.draft){ const o = [5, 10, 15, 20]; G.draft.min = o[(o.indexOf(G.draft.min) + 1) % o.length]; } break;
+    case 'rTgt': if (G.draft){ const o = [20, 40, 80, 9999]; G.draft.target = o[(o.indexOf(G.draft.target) + 1) % o.length]; } break;
+    case 'rRet': if (G.draft) G.draft.retreat = !G.draft.retreat; break;
+    case 'rSave': saveDraft(); break;
+    case 'rCancel': G.draft = null; break;
+    case 'rClear': if (target){ setRoute(target, null); msg(`Route cleared on ${tName(target)}.`); } break;
+    case 'shuttle': if (target){ setRoute(target, { mode:'shuttle', retreat:true }); msg(`${tName(target)} is now a civilian shuttle. ${target.driver ? '' : 'Hire a driver to run it.'}`, '#7fdc6a'); } break;
+    case 'hire': if (target) hireDriver(0, target); break;
+    case 'release': if (target) releaseDriver(target); break;
+    case 'recDepot': { const b = G.sel && G.sel.kind === 'depot' ? G.sel : nearestBld(p, 120, x => x.kind === 'depot' && x.owner === 0); if (b) recruit(0, 'inf', b); break; }
+    case 'cancelBP': { const b = G.sel && G.sel.kind === 'bp' ? G.sel : nearestBld(p, 120, x => x.kind === 'bp' && x.owner === 0); if (b){ b.dead = true; msg('Blueprint cancelled.'); } break; }
+  }
+  uiRefresh();
+}
+for (const id of ['ctx', 'cmd']) $(id).addEventListener('pointerdown', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  e.preventDefault(); e.stopPropagation(); doAct(b.dataset.act);
+});
+
+// ============================================================ input
+function onKey(e){
+  const p = G.player, t = p.inVeh;
+  switch (e.code){
+    case 'KeyE': toggleVehicle(); break;
+    case 'KeyF': if (p.down) break; t ? cmdBoard(t) : cmdWhistle(); break;
+    case 'KeyG': if (p.down) break; t ? cmdUnloadPax(t) : cmdSend(); break;
+    case 'KeyQ': { const o = ['all', 'inf', 'eng']; G.filter = o[(o.indexOf(G.filter) + 1) % 3]; msg(`G now sends: ${G.filter === 'all' ? 'everyone' : TYPEN[G.filter]}`); break; }
+    case 'KeyB': { const o = [null, 'depot', 'bunker']; G.build = o[(o.indexOf(G.build) + 1) % 3]; break; }
+    case 'KeyR': routeKey(); break;
+    case 'Digit1': case 'Digit2': case 'Digit3': {
+      if (!t) break;
+      const r = RES[+e.code.slice(-1) - 1];
+      e.shiftKey ? truckUnload(t, r, 5) : truckLoad(t, r, 5); break;
+    }
+    case 'KeyP': G.paused = !G.paused; break;
+    case 'BracketRight': G.speed = Math.min(4, G.speed + 1); break;
+    case 'BracketLeft': G.speed = Math.max(1, G.speed - 1); break;
+    case 'Escape': G.build = null; G.draft = null; G.sel = null; break;
+    default: return;
+  }
+  e.preventDefault();
+  uiRefresh();
+}
+function setupInput(){
+  G.keys = {};
+  addEventListener('keydown', e => { if (!G || e.target.tagName === 'INPUT') return; if (!G.keys[e.code]) { G.keys[e.code] = true; onKey(e); } });
+  addEventListener('keyup', e => { if (G) G.keys[e.code] = false; });
+  addEventListener('blur', () => { if (G) G.keys = {}; });
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  const toWorld = e => { G.mx = (e.clientX - cw / 2) / G.zoom + G.cam.x; G.my = (e.clientY - ch / 2) / G.zoom + G.cam.y; };
+  cv.addEventListener('mousemove', toWorld);
+  cv.addEventListener('mousedown', e => {
+    toWorld(e);
+    if (e.button === 2){
+      const m = { x:G.mx, y:G.my };
+      const t = nearestTruck(m, 30);
+      G.sel = t || nearestBld(m, 10) || null;
+      uiRefresh(); return;
+    }
+    if (e.button !== 0) return;
+    if (G.build && !G.player.inVeh){
+      const pending = G.bld.filter(b => b.kind === 'bp' && b.owner === 0).length;
+      if (pending >= 4){ msg('Too many open blueprints (max 4).', '#ffcf4a'); return; }
+      if (placeBP(0, G.build, G.mx, G.my)){ msg(`${BPDEF[G.build].name} blueprint placed. Truck the materials there and post engineers.`, '#bfe0ff'); if (!e.shiftKey) G.build = null; }
+      else msg('Cannot build there (blocked, too close to something, or near the enemy HQ).', '#ffcf4a');
+      uiRefresh(); return;
+    }
+    G.mouseDown = true;
+  });
+  addEventListener('mouseup', e => { if (e.button === 0 && G) G.mouseDown = false; });
+  cv.addEventListener('wheel', e => { e.preventDefault(); G.zoom = clamp(G.zoom * (e.deltaY > 0 ? .9 : 1.1), .4, 1.8); }, { passive:false });
+}
+
+// ============================================================ loop
+let last = 0;
+function frame(ts){
+  const real = Math.min(.05, (ts - last) / 1000 || 0); last = ts;
+  for (let i = 0; i < G.speed; i++) step(real);
+  drawWorld(); drawMini();
+  G.uiT -= real; if (G.uiT <= 0){ G.uiT = .25; uiRefresh(); }
+  requestAnimationFrame(frame);
+}
+function start(){
+  const num = (id, d) => { const v = parseFloat($(id).value); return isFinite(v) ? v : d; };
+  CFG.cas = clamp(Math.round(num('setCas', 10)), 3, 40);
+  CFG.crew = clamp(Math.round(num('setCrew', 3)), 1, 6);
+  CFG.shift = clamp(num('setShift', 150), 40, 400);
+  CFG.collapse = clamp(num('setCollapse', 150), 30, 400);
+  CFG.pop = clamp(Math.round(num('setPop', 24)), 6, 60);
+  CFG.aggr = parseFloat($('setAggr').value) || 1;
+  init(); setupInput();
+  $('start').style.display = 'none';
+  uiRefresh();
+  requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
+}
+$('startBtn').addEventListener('click', start);
+window.__game = { get G(){ return G; }, step, start, AIs, mkU, setSt, hurt };
+</script>
+</body>
+</html>
